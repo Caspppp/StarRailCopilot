@@ -12,8 +12,8 @@ class ManualConfig:
     Restart
     > Weekly > Ornament > Dungeon > Assignment
     > BattlePass > DailyQuest
-    > Freebies > DataUpdate
-    > Rogue
+    > Freebies > DataUpdate > RelicEnhance
+    > Rogue > ForgottenHallChallenge
     """
 
     """

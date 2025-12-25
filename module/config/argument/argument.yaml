@@ -438,3 +438,13 @@ Daemon:
     option: [ item_enemy, item, enemy, do_not_click ]
 PlannerScan:
   ResultAdd: false
+ForgottenHallChallenge:
+  DungeonType:
+    value: Memory_of_Chaos
+    option: [ Memory_of_Chaos, The_Last_Vestiges_of_Towering_Citadel ]
+  Stage:
+    value: 10
+    option: [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 ]
+  Team:
+    value: first_4
+    option: [ first_4 ]

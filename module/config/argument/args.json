@@ -1995,6 +1995,33 @@
       }
     }
   },
+  "RelicEnhance": {
+    "Scheduler": {
+      "Enable": {
+        "type": "checkbox",
+        "value": false,
+        "option": [
+          true,
+          false
+        ]
+      },
+      "NextRun": {
+        "type": "datetime",
+        "value": "2020-01-01 00:00:00",
+        "validate": "datetime"
+      },
+      "Command": {
+        "type": "input",
+        "value": "RelicEnhance",
+        "display": "hide"
+      },
+      "ServerUpdate": {
+        "type": "input",
+        "value": "04:00",
+        "display": "hide"
+      }
+    }
+  },
   "Weekly": {
     "Scheduler": {
       "Enable": {
@@ -2333,6 +2360,71 @@
       "ResultAdd": {
         "type": "checkbox",
         "value": false
+      }
+    }
+  },
+  "ForgottenHallChallenge": {
+    "Scheduler": {
+      "Enable": {
+        "type": "checkbox",
+        "value": false,
+        "option": [
+          true,
+          false
+        ]
+      },
+      "NextRun": {
+        "type": "datetime",
+        "value": "2020-01-01 00:00:00",
+        "validate": "datetime"
+      },
+      "Command": {
+        "type": "input",
+        "value": "ForgottenHallChallenge",
+        "display": "hide"
+      },
+      "ServerUpdate": {
+        "type": "input",
+        "value": "04:00",
+        "display": "hide"
+      }
+    },
+    "ForgottenHallChallenge": {
+      "DungeonType": {
+        "type": "select",
+        "value": "Memory_of_Chaos",
+        "option": [
+          "Memory_of_Chaos",
+          "The_Last_Vestiges_of_Towering_Citadel"
+        ]
+      },
+      "Stage": {
+        "type": "select",
+        "value": 10,
+        "option": [
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15
+        ]
+      },
+      "Team": {
+        "type": "select",
+        "value": "first_4",
+        "option": [
+          "first_4"
+        ]
       }
     }
   }

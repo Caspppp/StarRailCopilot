@@ -40,6 +40,14 @@ class StarRailCopilot(AzurLaneAutoScript):
         from tasks.dungeon.weekly import WeeklyDungeon
         WeeklyDungeon(config=self.config, device=self.device).run()
 
+    def forgotten_hall_challenge(self):
+        from tasks.forgotten_hall.challenge import ForgottenHallChallenge
+        ForgottenHallChallenge(config=self.config, device=self.device).run()
+
+    def relic_enhance(self):
+        from tasks.relics.enhance import RelicEnhance
+        RelicEnhance(config=self.config, device=self.device).run()
+
     def daily_quest(self):
         from tasks.daily.daily_quest import DailyQuestUI
         DailyQuestUI(config=self.config, device=self.device).run()

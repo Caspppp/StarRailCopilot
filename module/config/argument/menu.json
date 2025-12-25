@@ -17,7 +17,8 @@
       "BattlePass",
       "Assignment",
       "DataUpdate",
-      "Freebies"
+      "Freebies",
+      "RelicEnhance"
     ]
   },
   "Weekly": {
@@ -25,7 +26,8 @@
     "page": "setting",
     "tasks": [
       "Weekly",
-      "Rogue"
+      "Rogue",
+      "ForgottenHallChallenge"
     ]
   },
   "Tool": {

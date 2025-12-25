@@ -223,28 +223,55 @@ class RelicsUI(ItemUI):
         """
         Pages:
             in: page_item, any subpage of relics
-            out: enhance, with filter reset
+            out: 遗器列表页（ENHANCE_FILTER可见，准备筛选/选择）
+
+        注意：
+        - 该方法只负责到达"遗器列表页"，不进入"强化详情页"
+        - 后续通过 navigator.apply_filter_by_set_name() 筛选
+        - 然后通过 navigator.click_slot_verified() 点击遗器进入详情页
         """
-        logger.info('Relics goto enhance')
+        logger.info('Relics goto enhance (to list page)')
+        max_loops = 10
+        loop_count = 0
+
         while 1:
+            loop_count += 1
+            if loop_count > max_loops:
+                logger.error(f'relics_goto_enhance stuck after {max_loops} loops')
+                break
+
             if skip_first_screenshot:
                 skip_first_screenshot = False
             else:
                 self.device.screenshot()
 
-            # End
+            # 结束条件1: 已在强化详情页（已点击遗器后的页面）
             if self.is_in_relics_enhance() and self.appear(ENHANCE_FILTER):
-                logger.info('Arrive is_in_relics_enhance')
+                logger.info('Already in relic enhance detail page')
                 break
 
-            # Close filter
-            if self.handle_filter_close():
-                continue
-            # UI switch
+            # 结束条件2: 已在遗器列表页（筛选前的正常状态）
+            # 【关键修复】识别这个中间状态
+            if self.appear(ENHANCE_FILTER) and not self.is_in_relics_enhance():
+                logger.info('At relic list page, ready for filter/selection')
+                break
+
+            # 处理分解页：关闭返回列表
             if self.is_in_relics_salvage(interval=2):
-                logger.info(f'is_in_relics_salvage -> {CLOSE}')
+                logger.info('In salvage page, closing to return to list')
                 self.device.click(CLOSE)
                 continue
+
+            # 关闭筛选面板
+            if self.handle_filter_close():
+                logger.info(f'Loop {loop_count}: closed filter panel')
+                continue
+
+            # 调试日志
+            logger.info(f'Loop {loop_count}: '
+                       f'in_enhance={self.is_in_relics_enhance()} '
+                       f'filter_visible={self.appear(ENHANCE_FILTER)} '
+                       f'in_salvage={self.is_in_relics_salvage()}')
 
     def ui_goto_relics(self):
         self.ui_ensure(page_item)

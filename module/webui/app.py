@@ -88,6 +88,7 @@ from module.webui.widgets import (
     put_none,
     put_output,
 )
+from module.webui.components import relic_widgets
 
 patch_executor()
 task_handler = TaskHandler()
@@ -274,6 +275,157 @@ class AlasGUI(Frame):
 
         self.alas_overview()
 
+    def _render_relic_plan_section(self) -> None:
+        """渲染遗器强化方案管理区域"""
+        from module.webui import relic_plans
+
+        # 获取方案摘要
+        summary = relic_plans.plans_summary(self.alas_name)
+
+        with use_scope("groups"):
+            # 使用标准配置组样式
+            put_scope("group_RelicPlans", [
+                # 标题
+                put_text(t("Gui.RelicPlan.Title")),
+                # 摘要信息
+                relic_widgets.plan_summary_bar(
+                    total=summary["total"],
+                    enabled=summary["enabled"],
+                ),
+                put_html('<hr class="hr-group">'),
+
+                # 方案列表容器 - 显式初始化空内容避免 scope 污染
+                put_scope("relic_plan_list_container", content=[]),
+
+                # 新建方案按钮
+                put_buttons(
+                    [{"label": t("Gui.RelicPlan.NewPlan"), "value": "new", "color": "success"}],
+                    onclick=[self._relic_new_plan],
+                ).style("margin-top: 8px;"),
+
+                # 方案编辑表单容器
+                put_scope("relic_plan_edit_container"),
+            ])
+
+        # 刷新方案列表
+        self._relic_refresh_plans()
+
+    def _relic_refresh_plans(self) -> None:
+        """刷新方案列表"""
+        from module.webui import relic_plans
+
+        plans = relic_plans.load_plans(self.alas_name)
+
+        # 使用 clear=True 确保完全重置 scope
+        with use_scope("relic_plan_list_container", clear=True):
+            if not plans:
+                put_text(t("Gui.RelicPlan.NoPlan")).style("color: #888; padding: 16px;")
+                return
+
+            # 直接渲染方案列表
+            relic_widgets.render_plan_list(
+                plans=plans,
+                on_edit=self._relic_edit_plan,
+                on_delete=self._relic_delete_plan,
+                on_toggle=self._relic_toggle_plan,
+                on_move_up=lambda pid: self._relic_move_plan(pid, "up"),
+                on_move_down=lambda pid: self._relic_move_plan(pid, "down"),
+            )
+
+    def _relic_new_plan(self) -> None:
+        """显示新建方案表单"""
+        with use_scope("relic_plan_edit_container", clear=True):
+            outputs = relic_widgets.plan_edit_form(
+                plan=None,
+                on_save=self._relic_save_new_plan,
+                on_cancel=self._relic_cancel_edit,
+            )
+            for o in outputs:
+                o.show()
+
+    def _relic_edit_plan(self, plan_id: str) -> None:
+        """编辑方案"""
+        from module.webui import relic_plans
+
+        plan = relic_plans.get_plan(self.alas_name, plan_id)
+        if not plan:
+            return
+
+        with use_scope("relic_plan_edit_container", clear=True):
+            outputs = relic_widgets.plan_edit_form(
+                plan=plan,
+                on_save=lambda data: self._relic_save_plan(plan_id, data),
+                on_cancel=self._relic_cancel_edit,
+            )
+            for o in outputs:
+                o.show()
+
+    def _relic_save_new_plan(self, data: dict) -> None:
+        """保存新方案"""
+        from module.webui import relic_plans
+
+        relic_plans.create_plan(
+            self.alas_name,
+            data.get("name", "未命名方案"),
+            data.get("params"),
+        )
+        self._relic_cancel_edit()
+        self._relic_refresh_plans()
+        self._relic_refresh_summary()
+        toast(t("Gui.Toast.ConfigSaved"), duration=1, color="success")
+
+    def _relic_save_plan(self, plan_id: str, data: dict) -> None:
+        """保存方案修改"""
+        from module.webui import relic_plans
+
+        relic_plans.update_plan(self.alas_name, plan_id, {
+            "name": data.get("name"),
+            "params": data.get("params"),
+        })
+        self._relic_cancel_edit()
+        self._relic_refresh_plans()
+        toast(t("Gui.Toast.ConfigSaved"), duration=1, color="success")
+
+    def _relic_delete_plan(self, plan_id: str) -> None:
+        """删除方案"""
+        from module.webui import relic_plans
+
+        relic_plans.delete_plan(self.alas_name, plan_id)
+        self._relic_refresh_plans()
+        self._relic_refresh_summary()
+
+    def _relic_toggle_plan(self, plan_id: str) -> None:
+        """切换方案启用状态"""
+        from module.webui import relic_plans
+
+        relic_plans.toggle_plan(self.alas_name, plan_id)
+        self._relic_refresh_plans()
+        self._relic_refresh_summary()
+
+    def _relic_move_plan(self, plan_id: str, direction: str) -> None:
+        """移动方案位置"""
+        from module.webui import relic_plans
+
+        relic_plans.move_plan(self.alas_name, plan_id, direction)
+        self._relic_refresh_plans()
+
+    def _relic_duplicate_plan(self, plan_id: str) -> None:
+        """复制方案"""
+        from module.webui import relic_plans
+
+        relic_plans.duplicate_plan(self.alas_name, plan_id)
+        self._relic_refresh_plans()
+        self._relic_refresh_summary()
+
+    def _relic_cancel_edit(self) -> None:
+        """取消编辑"""
+        clear("relic_plan_edit_container")
+
+    def _relic_refresh_summary(self) -> None:
+        """刷新方案摘要（需要重新渲染页面）"""
+        # 简单实现：toast 提示
+        pass
+
     @use_scope("content", clear=True)
     def alas_set_group(self, task: str) -> None:
         """
@@ -292,9 +444,16 @@ class AlasGUI(Frame):
                 content=[put_text(task_help).style("font-size: 1rem")],
             )
 
+        # RelicEnhance 任务特殊处理：添加方案管理区域
+        if task == "RelicEnhance":
+            self._render_relic_plan_section()
+
         config = self.alas_config.read_file(self.alas_name)
         self.alas_config_hidden = self.alas_config.get_hidden_args(config)
         for group, arg_dict in deep_iter(self.ALAS_ARGS[task], depth=1):
+            # RelicEnhance 任务只使用方案模式，跳过配置组渲染
+            if task == "RelicEnhance" and group[0] == "RelicEnhance":
+                continue
             if self.set_group(group, arg_dict, config, task):
                 self.set_navigator(group)
 

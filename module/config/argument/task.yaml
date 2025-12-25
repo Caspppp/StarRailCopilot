@@ -51,6 +51,8 @@ Daily:
     Freebies:
       - Scheduler
       - Freebies
+    RelicEnhance:
+      - Scheduler
 
 # ==================== Weekly ====================
 
@@ -67,6 +69,9 @@ Weekly:
       - RogueWorld
       - RogueBlessing
       - RogueDebug
+    ForgottenHallChallenge:
+      - Scheduler
+      - ForgottenHallChallenge
 
 # ==================== Tool ====================
 

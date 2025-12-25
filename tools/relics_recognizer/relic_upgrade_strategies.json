@@ -1,0 +1,65 @@
+{
+  "version": "1.0",
+  "updated": "2025-11-12",
+  "profiles": [
+    {
+      "id": "default_3init_2valid",
+      "name": "普通 3 起 2 有效",
+      "description": [
+        "+3：命中有效词条继续，否则停止（稀有主位例外）",
+        "+9 之前至少命中 1 次有效，否则停止",
+        "+12 之前有效命中累计 < 2，停止",
+        "+15 只保留 >= 3 次有效命中的遗器，其余分解或喂养"
+      ],
+      "thresholds": {
+        "+3": {"min_hits": 1, "stop_if_fail": true},
+        "+9": {"min_hits": 1},
+        "+12": {"min_total_hits": 2},
+        "+15": {"min_total_hits": 3, "keep_only": true}
+      }
+    },
+    {
+      "id": "default_4init_2valid",
+      "name": "普通 4 起 2 有效",
+      "description": [
+        "+6 前 0 命中直接停止",
+        "+9 前 <= 1 命中停止",
+        "+12 前累积 >= 2 命中即可冲 +15"
+      ],
+      "thresholds": {
+        "+6": {"min_hits": 1},
+        "+9": {"min_total_hits": 2},
+        "+12": {"min_total_hits": 2, "promote_to_15": true}
+      }
+    },
+    {
+      "id": "default_4init_3valid",
+      "name": "普通 4 起 3 有效",
+      "description": [
+        "默认一路冲到 +15",
+        "若前三次命中 <= 1 次则考虑止损"
+      ],
+      "thresholds": {
+        "+9": {"min_total_hits": 2},
+        "+12": {"min_total_hits": 2},
+        "+15": {"min_total_hits": 3}
+      }
+    },
+    {
+      "id": "speed_priority",
+      "name": "速度优先策略",
+      "description": [
+        "无初始速度直接丢弃",
+        "有速度则采用闸门法：+6 看是否命速度；+9 达 5；+12 达 7；+15 达 9",
+        "只保留持续命中速度的遗器，其余及时喂狗粮"
+      ],
+      "thresholds": {
+        "+6": {"min_speed_rolls": 1},
+        "+9": {"min_speed_value": 5},
+        "+12": {"min_speed_value": 7},
+        "+15": {"min_speed_value": 9, "keep_only": true}
+      }
+    }
+  ],
+  "notes": "可根据用户需求扩展或修改 profiles。阈值字段仅定义规则，实际执行时由脚本进行解释。"
+}
