@@ -93,3 +93,68 @@ TELEPORT = ButtonWrapper(
         button=(1018, 355, 1038, 375),
     ),
 )
+PRESET_TEAM = ButtonWrapper(
+    name='PRESET_TEAM',
+    share=Button(
+        file='./assets/share/forgotten_hall/ui/PRESET_TEAM.png',
+        area=(318, 83, 394, 108),
+        search=(298, 63, 414, 128),
+        color=(199, 195, 182),
+        button=(318, 83, 394, 108),
+    ),
+)
+# 预设编队面板已打开检测
+PRESET_TEAM_OPENED = ButtonWrapper(
+    name='PRESET_TEAM_OPENED',
+    share=Button(
+        file='./tools/forgotten_hall_navigator/assets/PRESET_TEAM_OPENED.png',
+        area=(317, 85, 394, 105),
+        search=(297, 65, 414, 125),
+        color=(0, 0, 0),
+        button=(317, 85, 394, 105),
+    ),
+)
+# 第二关切换按钮 - 直接坐标点击
+BATTLE_2_SWITCH = ButtonWrapper(
+    name='BATTLE_2_SWITCH',
+    share=Button(
+        file='',
+        area=(895, 525, 925, 595),
+        search=(895, 525, 925, 595),
+        color=(0, 0, 0),
+        button=(895, 525, 925, 595),
+    ),
+)
+# 清除已选配队按钮
+CLEAR_TEAM = ButtonWrapper(
+    name='CLEAR_TEAM',
+    share=Button(
+        file='./assets/share/forgotten_hall/ui/CLEAR_TEAM.png',
+        area=(1194, 391, 1218, 408),
+        search=(1174, 371, 1238, 428),
+        color=(0, 0, 0),
+        button=(1194, 391, 1218, 408),
+    ),
+)
+# 上半关卡队伍槽位（空白状态检测）
+TEAM_SLOT_BATTLE1_EMPTY = ButtonWrapper(
+    name='TEAM_SLOT_BATTLE1_EMPTY',
+    share=Button(
+        file='./assets/share/forgotten_hall/ui/TEAM_SLOT_EMPTY.png',
+        area=(936, 436, 1231, 499),
+        search=(916, 416, 1251, 519),  # 扩大20px用于滑动匹配
+        color=(0, 0, 0),
+        button=(936, 436, 1231, 499),
+    ),
+)
+# 下半关卡队伍槽位（空白状态检测）
+TEAM_SLOT_BATTLE2_EMPTY = ButtonWrapper(
+    name='TEAM_SLOT_BATTLE2_EMPTY',
+    share=Button(
+        file='./assets/share/forgotten_hall/ui/TEAM_SLOT_EMPTY.png',
+        area=(935, 529, 1230, 592),
+        search=(915, 509, 1250, 612),  # 扩大20px用于滑动匹配
+        color=(0, 0, 0),
+        button=(935, 529, 1230, 592),
+    ),
+)

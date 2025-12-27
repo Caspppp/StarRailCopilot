@@ -27,12 +27,14 @@ class ForgottenHallChallenge(ForgottenHallUI):
             # 1. 解析配置参数
             dungeon_type = self.config.ForgottenHallChallenge_DungeonType
             stage_num = int(self.config.ForgottenHallChallenge_Stage)
-            team_mode = self.config.ForgottenHallChallenge_Team
+            team1_preset = int(self.config.ForgottenHallChallenge_Team1Preset)
+            team2_preset = int(self.config.ForgottenHallChallenge_Team2Preset)
 
             logger.hr('Forgotten Hall Challenge', level=1)
             logger.info(f'Dungeon type: {dungeon_type}')
             logger.info(f'Stage: {stage_num}')
-            logger.info(f'Team: {team_mode}')
+            logger.info(f'Team1 Preset: {team1_preset}')
+            logger.info(f'Team2 Preset: {team2_preset}')
 
             # 2. 选择深渊类型
             if dungeon_type == 'Memory_of_Chaos':
@@ -59,41 +61,21 @@ class ForgottenHallChallenge(ForgottenHallUI):
             # 5. 执行挑战流程
             logger.hr(f'Challenge: {dungeon.cn} - {stage.cn}', level=2)
 
-            # 5.1 导航到舞台
-            logger.info('Navigate to stage')
-            if not self.stage_goto(dungeon, stage):
+            # 5.1 导航到舞台并配置预设编队
+            logger.info('Navigate to stage and configure preset teams')
+            if not self.stage_goto(dungeon, stage,
+                                   team1_preset=team1_preset,
+                                   team2_preset=team2_preset):
                 logger.error('Failed to navigate to stage')
                 return False
-            logger.info('Stage navigation complete')
+            logger.info('Stage navigation and team configuration complete')
 
-            # 5.2 配置队伍
-            logger.info('Prepare team')
-            if team_mode == 'first_4':
-                logger.info('Use first 4 characters')
-                if not self.team_is_prepared():
-                    if not self.team_choose_first_4():
-                        logger.error('Failed to prepare team')
-                        return False
-                    logger.info('Team prepared')
-                else:
-                    logger.info('Team already prepared')
-            else:
-                logger.info(f'Use preset team: {team_mode}')
-                # TODO: 支持预设队伍选择
-                if not self.team_is_prepared():
-                    if not self.team_choose_first_4():
-                        logger.error('Failed to prepare team (first 4 fallback)')
-                        return False
-                    logger.info('Team prepared (first 4 fallback)')
-                else:
-                    logger.info('Team already prepared')
-
-            # 5.3 进入副本
+            # 5.2 进入副本
             logger.info('Enter dungeon')
             self.enter_forgotten_hall_dungeon()
             logger.info('Dungeon entered')
 
-            # 5.4 提示信息
+            # 5.3 提示信息
             logger.info('Wait for battle')
             logger.warning('Battle is not automated, manual control required')
             logger.info('Use exit_dungeon() to leave dungeon')

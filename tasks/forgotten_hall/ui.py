@@ -457,13 +457,26 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam):
                 self.interval_reset(check_button)
                 continue
 
-    def stage_goto(self, dungeon: DungeonList, stage_keyword: ForgottenHallStage):
+    def stage_goto(self, dungeon: DungeonList, stage_keyword: ForgottenHallStage,
+                   team1_preset: int = None, team2_preset: int = None):
         """
+        导航到指定关卡并配置预设编队
+
+        Args:
+            dungeon: 深渊类型
+            stage_keyword: 目标关卡
+            team1_preset: 第一关使用的预设编队编号 (1-12, 1-based)
+            team2_preset: 第二关使用的预设编队编号 (1-12, 1-based)
+
         Examples:
             self = ForgottenHallUI('alas')
             self.device.screenshot()
             self.stage_goto(KEYWORDS_DUNGEON_LIST.The_Last_Vestiges_of_Towering_Citadel,
-                            KEYWORDS_FORGOTTEN_HALL_STAGE.Stage_8)
+                            KEYWORDS_FORGOTTEN_HALL_STAGE.Stage_8,
+                            team1_preset=1, team2_preset=2)
+
+        Returns:
+            bool: 是否成功
         """
         if not dungeon in [
             KEYWORDS_DUNGEON_LIST.Memory_of_Chaos,
@@ -471,11 +484,11 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam):
 
         ]:
             logger.error(f'DungeonList Chosen is not a forgotten hall: {dungeon}')
-            return
+            return False
         if dungeon == KEYWORDS_DUNGEON_LIST.Memory_of_Chaos and stage_keyword.id > 10:
             logger.error(f'This dungeon "{dungeon}" does not have stage that greater than 10. '
                          f'{stage_keyword.id} is chosen')
-            return
+            return False
 
         if self.appear(FORGOTTEN_HALL_CHECK):
             logger.info('Already in forgotten hall')
@@ -491,7 +504,7 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam):
             if not navigator.goto_forgotten_hall_from_guide(self.device):
                 logger.error('Failed to navigate to Forgotten Hall via Treasures Lightward')
                 logger.error('Navigation failed, please check if the game UI has changed')
-                return
+                return False
 
             # 旧代码（保留作为参考，游戏版本回退时可恢复）:
             # self.dungeon_tab_goto(KEYWORDS_DUNGEON_TAB.Survival_Index)
@@ -500,6 +513,434 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam):
         self.stage_choose(dungeon)
         logger.info(f'Stage list select: {stage_keyword}')
         STAGE_LIST.select_row(stage_keyword, main=self)
+
+        # 配置预设编队
+        if team1_preset or team2_preset:
+            self._click_preset_team()
+            self._configure_preset_teams(team1_preset, team2_preset)
+
+        return True
+
+    def _click_preset_team(self, skip_first_screenshot=False):
+        """点击预设编队按钮并验证面板已打开
+
+        Pages:
+            in: 关卡选择完成后
+            out: 预设编队面板
+        """
+        logger.info('Click preset team button')
+        timeout = Timer(5).start()
+        interval = Timer(1)
+        just_clicked = False  # 标记是否刚点击过
+
+        while 1:
+            if skip_first_screenshot:
+                skip_first_screenshot = False
+            else:
+                self.device.screenshot()
+
+            if timeout.reached():
+                logger.warning('Click preset team timeout')
+                break
+
+            # === 调试：输出匹配相似度 + 修复模板加载 ===
+            import cv2
+            from module.base.utils import crop
+            import numpy as np
+
+            # 代码版本标记
+            CODE_VERSION = "v2.2_restored"
+            logger.info(f'[DEBUG] Code version: {CODE_VERSION}')
+
+            # 检查模板加载
+            template_from_button = PRESET_TEAM_OPENED.buttons[0].image
+            template_file_path = PRESET_TEAM_OPENED.buttons[0].file
+
+            logger.info(f'[DEBUG] Template file path: {template_file_path}')
+            if template_from_button is not None:
+                logger.info(f'[DEBUG] Template from button mean: {np.mean(template_from_button):.2f}')
+
+            # 从文件重新加载模板（修复全黑问题）
+            template_from_file = cv2.imread(template_file_path)
+            if template_from_file is not None:
+                logger.info(f'[DEBUG] Template from file mean: {np.mean(template_from_file):.2f}')
+
+            # 使用从文件加载的正确模板
+            template = template_from_file if template_from_file is not None else template_from_button
+            logger.info(f'[DEBUG] Using template mean: {np.mean(template):.2f}')
+
+            search_region = crop(self.device.image, PRESET_TEAM_OPENED.buttons[0].search, copy=False)
+
+            # 模板匹配
+            res = cv2.matchTemplate(search_region, template, cv2.TM_CCOEFF_NORMED)
+            _, max_val, _, _ = cv2.minMaxLoc(res)
+            logger.info(f'PRESET_TEAM_OPENED match similarity: {max_val:.4f}')
+
+            # 临时替换 button.image 以修复 self.appear()
+            original_image = PRESET_TEAM_OPENED.buttons[0].image
+            PRESET_TEAM_OPENED.buttons[0].image = template
+
+            appear_result = self.appear(PRESET_TEAM_OPENED)
+
+            # 恢复原始 image
+            PRESET_TEAM_OPENED.buttons[0].image = original_image
+
+            logger.info(f'[DEBUG] self.appear() returned: {appear_result}')
+
+            if appear_result:
+                logger.info('Preset team panel opened')
+                break
+
+            # 如果刚点击过但检测失败，等待界面刷新
+            if just_clicked:
+                logger.info('Waiting 0.5s for UI to refresh after click...')
+                self.device.sleep(0.5)
+                just_clicked = False
+                continue
+
+            # 点击预设编队按钮
+            if interval.reached() and self.appear(PRESET_TEAM):
+                logger.info(f'[DEBUG] Clicking PRESET_TEAM button')
+                self.device.click(PRESET_TEAM)
+                interval.reset()
+                logger.info('Preset team button clicked')
+                just_clicked = True
+                continue
+
+    def _verify_team_cleared(self, battle_num: int, timeout: float = 2.0) -> bool:
+        """验证队伍已被清除（匹配空白模板）
+
+        Args:
+            battle_num: 1=上半, 2=下半
+            timeout: 超时时间（秒）
+
+        Returns:
+            是否成功清除
+        """
+        button = TEAM_SLOT_BATTLE1_EMPTY if battle_num == 1 else TEAM_SLOT_BATTLE2_EMPTY
+
+        timer = Timer(timeout).start()
+        while not timer.reached():
+            self.device.screenshot()
+            if self.appear(button):
+                logger.info(f'Battle {battle_num} team cleared successfully')
+                return True
+            self.device.sleep(0.2)
+
+        logger.warning(f'Battle {battle_num} team clear verification failed')
+        return False
+
+    def _verify_team_selected(self, battle_num: int, timeout: float = 2.0) -> bool:
+        """验证队伍已被选择（不匹配空白模板）
+
+        Args:
+            battle_num: 1=上半, 2=下半
+            timeout: 超时时间（秒）
+
+        Returns:
+            是否成功选择
+        """
+        button = TEAM_SLOT_BATTLE1_EMPTY if battle_num == 1 else TEAM_SLOT_BATTLE2_EMPTY
+
+        timer = Timer(timeout).start()
+        while not timer.reached():
+            self.device.screenshot()
+            if not self.appear(button):
+                logger.info(f'Battle {battle_num} team selected successfully')
+                return True
+            self.device.sleep(0.2)
+
+        logger.warning(f'Battle {battle_num} team selection verification failed')
+        return False
+
+    def _configure_preset_teams(self, team1_preset: int = None, team2_preset: int = None):
+        """配置两关的预设编队
+
+        Args:
+            team1_preset: 第一关使用的预设编队编号 (1-12, 1-based)
+            team2_preset: 第二关使用的预设编队编号 (1-12, 1-based)
+        """
+        # ========== 在开始配置前，先清除所有已有队伍（只清除一次） ==========
+        if team1_preset or team2_preset:
+            logger.info('[DEBUG] Clear all existing team selections before configuration')
+            self.device.click(CLEAR_TEAM)
+            self.device.sleep(0.5)  # 等待清除完成
+
+        # ========== 配置第一关队伍 ==========
+        if team1_preset:
+            logger.info(f'[DEBUG] Configuring battle 1 with preset team {team1_preset}')
+
+            # 选择预设编队
+            logger.info(f'[DEBUG] Select preset team {team1_preset} for battle 1')
+            self.select_preset_team(team1_preset)
+            self.device.sleep(0.3)
+
+            # 验证选择成功
+            if not self._verify_team_selected(battle_num=1):
+                logger.warning('[DEBUG] Battle 1 team selection verification failed')
+
+        # ========== 切换到第二关并配置队伍 ==========
+        if team2_preset:
+            logger.info('[DEBUG] Switch to battle 2')
+            self._click_battle_switch(2)
+            self.device.sleep(0.5)
+
+            # 直接选择预设编队（不需要再清除）
+            logger.info(f'[DEBUG] Select preset team {team2_preset} for battle 2')
+            self.select_preset_team(team2_preset)
+            self.device.sleep(0.3)
+
+            # 验证选择成功
+            if not self._verify_team_selected(battle_num=2):
+                logger.warning('[DEBUG] Battle 2 team selection verification failed')
+
+    # ========== 预设编队滚动条检测与选择 ==========
+    # 几何常量
+    PRESET_TEAM_SCROLLBAR_ROI = (477, 130, 483, 669)  # 滚动条区域
+    PRESET_TEAM_HEIGHT = 160  # 单个队伍高度
+    PRESET_TEAM_GAP = 12      # 队伍间距
+    PRESET_TEAM_PITCH = 172   # height + gap
+    PRESET_TEAM_VIEW_HEIGHT = 548  # 可见区域高度
+    PRESET_TEAM_TOP_Y = 130   # 列表顶部Y坐标
+
+    def _get_preset_team_scroll_thumb(self, image) -> tuple:
+        """检测预设编队滚动条滑块
+
+        通过亮度阈值检测滑块位置
+
+        Args:
+            image: 截图图像 (BGR格式)
+
+        Returns:
+            (valid, y_top, y_bottom, track_top, track_bottom)
+            - valid: 是否检测到有效滑块
+            - y_top, y_bottom: 滑块顶部和底部的绝对Y坐标
+            - track_top, track_bottom: 轨道顶部和底部Y坐标
+        """
+        x1, y1, x2, y2 = self.PRESET_TEAM_SCROLLBAR_ROI
+        crop_img = image[y1:y2, x1:x2]
+
+        if crop_img.size == 0:
+            return (False, 0, 0, y1, y2)
+
+        # 灰度化
+        gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
+
+        # 二值化（亮度阈值150）
+        _, bin_img = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+
+        # 行求和
+        row_sum = bin_img.sum(axis=1)
+        h = row_sum.shape[0]
+
+        # 找最长连续亮区
+        max_len = 0
+        best = (0, 0)
+        run_len = 0
+        run_start = 0
+
+        for i in range(h):
+            if row_sum[i] > 0:
+                if run_len == 0:
+                    run_start = i
+                run_len += 1
+            else:
+                if run_len > max_len:
+                    max_len = run_len
+                    best = (run_start, i - 1)
+                run_len = 0
+
+        # 处理最后一个运行
+        if run_len > max_len:
+            max_len = run_len
+            best = (run_start, h - 1)
+
+        # 有效性检查：滑块最小高度6px
+        if max_len < 6:
+            return (False, 0, 0, y1, y2)
+
+        # 返回绝对坐标
+        y_top = y1 + best[0]
+        y_bottom = y1 + best[1]
+        return (True, y_top, y_bottom, y1, y2)
+
+    def _get_preset_team_scroll_state(self) -> tuple:
+        """获取预设编队滚动状态
+
+        Returns:
+            (valid, total_teams, top_team_index)
+            - valid: 是否检测到有效滑块
+            - total_teams: 总队伍数（从滑块大小反推）
+            - top_team_index: 当前顶部队伍索引 (0-based)
+        """
+        valid, y_top, y_bot, t_top, t_bot = self._get_preset_team_scroll_thumb(
+            self.device.image
+        )
+
+        if not valid:
+            # 无滚动条 = 队伍数 <= 3，全部可见
+            return (False, 3, 0)
+
+        H_track = t_bot - t_top  # 轨道高度
+        h = y_bot - y_top + 1    # 滑块高度
+
+        # 滑块正规化
+        y_norm = (y_top - t_top) / max(H_track - h, 1.0)  # 位置 0-1
+        h_norm = h / max(H_track, 1.0)                     # 大小 0-1
+
+        # 从滑块大小反推总队伍数
+        # h_norm ≈ 可见队伍数 / 总队伍数
+        visible_teams = 3.2
+        N_total = int(round(visible_teams / max(h_norm, 0.1)))
+        N_total = max(4, min(12, N_total))  # 限制在4-12范围
+
+        # 计算当前顶部队伍索引
+        max_scroll_teams = max(N_total - 3, 0)
+        k_top = int(round(y_norm * max_scroll_teams))
+
+        logger.info(f'Preset team scroll state: total={N_total}, top={k_top}, y_norm={y_norm:.2f}')
+        return (True, N_total, k_top)
+
+    def _drag_preset_team_slider(self, target_team: int) -> bool:
+        """拖动滑块到目标队伍位置
+
+        Args:
+            target_team: 目标队伍索引 (0-based)
+
+        Returns:
+            是否成功拖动
+        """
+        # 获取当前滑块状态
+        self.device.screenshot()
+        valid, y_top, y_bot, t_top, t_bot = self._get_preset_team_scroll_thumb(
+            self.device.image
+        )
+        if not valid:
+            logger.warning('No scrollbar detected for preset team')
+            return False
+
+        # 计算几何参数
+        H_track = float(t_bot - t_top)
+        h = float(y_bot - y_top + 1)
+
+        # 获取总队伍数
+        _, N_total, _ = self._get_preset_team_scroll_state()
+
+        # 计算目标滑块位置
+        max_scroll_teams = max(N_total - 3, 0)
+        target_top = max(0, min(max_scroll_teams, target_team))
+        s_target = target_top / max(max_scroll_teams, 1.0)  # 目标位置 0-1
+
+        # 计算目标Y坐标
+        y_target_top = t_top + s_target * (H_track - h)
+
+        # 获取滑块中心坐标
+        x1, y1, x2, y2 = self.PRESET_TEAM_SCROLLBAR_ROI
+        cx = (x1 + x2) // 2
+        cy_now = int((y_top + y_bot) / 2)
+        cy_target = int(y_target_top + h / 2.0)
+
+        logger.info(f'Drag preset team slider: {cy_now} -> {cy_target}')
+
+        # 执行拖动
+        self.device.drag(
+            (cx, cy_now), (cx, cy_target),
+            name="PRESET_TEAM_SLIDER_DRAG"
+        )
+
+        # 等待稳定
+        self.device.sleep(0.3)
+
+        return True
+
+    def _click_preset_team_slot(self, slot_index: int):
+        """点击当前可见的第N个队伍槽位
+
+        Args:
+            slot_index: 槽位索引 (0, 1, 2)
+        """
+        from module.base.button import Button
+
+        y_base = self.PRESET_TEAM_TOP_Y + slot_index * self.PRESET_TEAM_PITCH
+        y_center = y_base + self.PRESET_TEAM_HEIGHT // 2
+        x_center = (32 + 463) // 2  # 列表区域中心X
+
+        # 创建临时按钮用于点击（device.click需要Button对象）
+        click_area = (x_center - 20, y_center - 20, x_center + 20, y_center + 20)
+        button = Button(
+            file='',
+            area=click_area,
+            search=click_area,
+            color=(0, 0, 0),
+            button=click_area
+        )
+
+        logger.info(f'Click preset team slot {slot_index} at ({x_center}, {y_center})')
+        self.device.click(button)
+
+    def select_preset_team(self, team_index: int) -> bool:
+        """选择指定编号的预设编队
+
+        Args:
+            team_index: 预设编队编号 (1-12, 1-based)
+
+        Returns:
+            是否成功选择
+        """
+        # 参数验证
+        if team_index < 1 or team_index > 12:
+            logger.error(f'Invalid preset team index: {team_index}, must be 1-12')
+            return False
+
+        target = team_index - 1  # 转为0-based
+        logger.info(f'Select preset team {team_index}')
+
+        # 获取当前滚动状态
+        self.device.screenshot()
+        valid, total, top = self._get_preset_team_scroll_state()
+
+        if not valid:
+            # 无滚动条，队伍数 <= 3，直接点击
+            if target < 3:
+                self._click_preset_team_slot(target)
+                return True
+            else:
+                logger.error(f'Target team {team_index} not available (only {total} teams)')
+                return False
+
+        # 检查目标队伍是否存在
+        if target >= total:
+            logger.error(f'Target team {team_index} not available (only {total} teams)')
+            return False
+
+        # 计算目标队伍在当前视图中的位置
+        visible_index = target - top
+
+        # 如果不在可见范围(0-2)，需要滚动
+        if visible_index < 0 or visible_index > 2:
+            logger.info(f'Target team not visible (visible_index={visible_index}), scrolling...')
+            self._drag_preset_team_slider(target)
+            self.device.screenshot()
+
+            # 重新获取状态
+            _, _, top = self._get_preset_team_scroll_state()
+            visible_index = target - top
+
+        # 点击对应槽位
+        self._click_preset_team_slot(visible_index)
+        logger.info(f'Selected preset team {team_index}')
+        return True
+
+    def _click_battle_switch(self, battle_num: int):
+        """点击切换到第N关
+
+        Args:
+            battle_num: 关卡编号 (1 或 2)
+        """
+        if battle_num == 2:
+            logger.info('Switch to battle 2')
+            self.device.click(BATTLE_2_SWITCH)
+            self.device.sleep(0.5)
 
     def exit_dungeon(self, skip_first_screenshot=True):
         """
