@@ -103,7 +103,18 @@ PRESET_TEAM = ButtonWrapper(
         button=(318, 83, 394, 108),
     ),
 )
-# 预设编队面板已打开检测
+# 预设编队面板已打开检测（新版本，更可靠的黑色背景区域检测）
+PRESET_TEAM_PANEL_OPENED = ButtonWrapper(
+    name='PRESET_TEAM_PANEL_OPENED',
+    share=Button(
+        file='./tools/forgotten_hall_navigator/assets/PRESET_TEAM_PANEL_OPENED.png',
+        area=(263, 85, 450, 106),
+        search=(243, 65, 470, 126),
+        color=(0, 0, 0),
+        button=(263, 85, 450, 106),
+    ),
+)
+# 预设编队面板已打开检测（旧版本，保留作为备用）
 PRESET_TEAM_OPENED = ButtonWrapper(
     name='PRESET_TEAM_OPENED',
     share=Button(
@@ -137,24 +148,26 @@ CLEAR_TEAM = ButtonWrapper(
     ),
 )
 # 上半关卡队伍槽位（空白状态检测）
+# 使用完整屏幕截图作为模板，area 为屏幕坐标用于裁剪
 TEAM_SLOT_BATTLE1_EMPTY = ButtonWrapper(
     name='TEAM_SLOT_BATTLE1_EMPTY',
     share=Button(
-        file='./assets/share/forgotten_hall/ui/TEAM_SLOT_EMPTY.png',
-        area=(936, 436, 1231, 499),
-        search=(916, 416, 1251, 519),  # 扩大20px用于滑动匹配
+        file='./tools/forgotten_hall_navigator/assets/TEAM_SLOT_BATTLE1_EMPTY.png',
+        area=(935, 435, 1231, 499),  # 从完整屏幕截图中裁剪的区域
+        search=(915, 415, 1251, 519),  # 屏幕搜索区域（扩大20px）
         color=(0, 0, 0),
-        button=(936, 436, 1231, 499),
+        button=(935, 435, 1231, 499),
     ),
 )
 # 下半关卡队伍槽位（空白状态检测）
+# 使用完整屏幕截图作为模板，area 为屏幕坐标用于裁剪
 TEAM_SLOT_BATTLE2_EMPTY = ButtonWrapper(
     name='TEAM_SLOT_BATTLE2_EMPTY',
     share=Button(
-        file='./assets/share/forgotten_hall/ui/TEAM_SLOT_EMPTY.png',
-        area=(935, 529, 1230, 592),
-        search=(915, 509, 1250, 612),  # 扩大20px用于滑动匹配
+        file='./tools/forgotten_hall_navigator/assets/TEAM_SLOT_BATTLE2_EMPTY.png',
+        area=(935, 529, 1231, 593),  # 从完整屏幕截图中裁剪的区域
+        search=(915, 509, 1251, 613),  # 屏幕搜索区域（扩大20px）
         color=(0, 0, 0),
-        button=(935, 529, 1230, 592),
+        button=(935, 529, 1231, 593),
     ),
 )

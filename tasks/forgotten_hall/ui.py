@@ -1,10 +1,12 @@
 import cv2
 import numpy as np
+import os
+import time
 from pponnxcr.predict_system import BoxedResult
 
 from module.base.base import ModuleBase
 from module.base.timer import Timer
-from module.base.utils import area_offset, color_similarity_2d, crop
+from module.base.utils import area_offset, color_similarity_2d, crop, save_image
 from module.logger.logger import logger
 from module.ocr.keyword import Keyword
 from module.ocr.ocr import Ocr, OcrResultButton
@@ -543,59 +545,16 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam):
                 logger.warning('Click preset team timeout')
                 break
 
-            # === 调试：输出匹配相似度 + 修复模板加载 ===
-            import cv2
-            from module.base.utils import crop
-            import numpy as np
-
-            # 代码版本标记
-            CODE_VERSION = "v2.2_restored"
-            logger.info(f'[DEBUG] Code version: {CODE_VERSION}')
-
-            # 检查模板加载
-            template_from_button = PRESET_TEAM_OPENED.buttons[0].image
-            template_file_path = PRESET_TEAM_OPENED.buttons[0].file
-
-            logger.info(f'[DEBUG] Template file path: {template_file_path}')
-            if template_from_button is not None:
-                logger.info(f'[DEBUG] Template from button mean: {np.mean(template_from_button):.2f}')
-
-            # 从文件重新加载模板（修复全黑问题）
-            template_from_file = cv2.imread(template_file_path)
-            if template_from_file is not None:
-                logger.info(f'[DEBUG] Template from file mean: {np.mean(template_from_file):.2f}')
-
-            # 使用从文件加载的正确模板
-            template = template_from_file if template_from_file is not None else template_from_button
-            logger.info(f'[DEBUG] Using template mean: {np.mean(template):.2f}')
-
-            search_region = crop(self.device.image, PRESET_TEAM_OPENED.buttons[0].search, copy=False)
-
-            # 模板匹配
-            res = cv2.matchTemplate(search_region, template, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, _ = cv2.minMaxLoc(res)
-            logger.info(f'PRESET_TEAM_OPENED match similarity: {max_val:.4f}')
-
-            # 临时替换 button.image 以修复 self.appear()
-            original_image = PRESET_TEAM_OPENED.buttons[0].image
-            PRESET_TEAM_OPENED.buttons[0].image = template
-
-            appear_result = self.appear(PRESET_TEAM_OPENED)
-
-            # 恢复原始 image
-            PRESET_TEAM_OPENED.buttons[0].image = original_image
-
-            logger.info(f'[DEBUG] self.appear() returned: {appear_result}')
-
-            if appear_result:
+            # 使用新的预设编队面板检测模板
+            if self.appear(PRESET_TEAM_PANEL_OPENED):
                 logger.info('Preset team panel opened')
                 break
 
-            # 如果刚点击过但检测失败，等待界面刷新
+            # 如果刚点击过但检测失败，继续循环等待面板出现
             if just_clicked:
-                logger.info('Waiting 0.5s for UI to refresh after click...')
-                self.device.sleep(0.5)
+                logger.info('Waiting for preset team panel to appear...')
                 just_clicked = False
+                # 移除固定延迟，依靠循环检测（screenshot()间隔已提供适当延迟）
                 continue
 
             # 点击预设编队按钮
@@ -641,16 +600,76 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam):
             是否成功选择
         """
         button = TEAM_SLOT_BATTLE1_EMPTY if battle_num == 1 else TEAM_SLOT_BATTLE2_EMPTY
+        # 获取实际的 Button 对象（ButtonWrapper 包含多个 Button）
+        actual_button = button.buttons[0]
+
+        logger.info(f'[DEBUG] Start verifying battle {battle_num} team selection')
+
+        # 给界面一个短暂的初始延迟，避免立即检测时界面尚未开始刷新
+        self.device.sleep(0.2)
+
+        # 保存验证开始时的截图
+        self.device.screenshot()
+        os.makedirs('./log/debug/team_verification', exist_ok=True)
+        save_image(self.device.image,
+                  f'./log/debug/team_verification/verify_start_battle{battle_num}_{int(time.time()*1000)}.png')
 
         timer = Timer(timeout).start()
+        loop_count = 0
+        last_similarity = 0.0
+
         while not timer.reached():
+            loop_count += 1
             self.device.screenshot()
-            if not self.appear(button):
-                logger.info(f'Battle {battle_num} team selected successfully')
+
+            # 获取匹配相似度
+            image = crop(self.device.image, actual_button.search, copy=False)
+
+            # Debug: 输出图像尺寸
+            if loop_count == 1:
+                logger.info(f'[DEBUG] Template image shape: {actual_button.image.shape}')
+                logger.info(f'[DEBUG] Search region shape: {image.shape}')
+                logger.info(f'[DEBUG] Search area: {actual_button.search}')
+                logger.info(f'[DEBUG] Button area: {actual_button.area}')
+                # 保存模板图像供检查
+                save_image(actual_button.image,
+                          f'./log/debug/team_verification/template_battle{battle_num}_{int(time.time()*1000)}.png')
+
+            res = cv2.matchTemplate(actual_button.image, image, cv2.TM_CCOEFF_NORMED)
+            _, similarity, _, point = cv2.minMaxLoc(res)
+            last_similarity = similarity
+
+            # Debug: 输出匹配结果的形状
+            if loop_count == 1:
+                logger.info(f'[DEBUG] Match result shape: {res.shape}')
+                logger.info(f'[DEBUG] Match point: {point}')
+
+            logger.info(f'[DEBUG] Battle {battle_num} verification loop {loop_count}: '
+                       f'similarity={similarity:.4f}, threshold=0.85, '
+                       f'elapsed={timer.current_time():.2f}s')
+
+            # 判断是否匹配（使用默认阈值 0.85）
+            if similarity <= 0.85:  # 不匹配空白模板，说明有队伍了
+                logger.info(f'Battle {battle_num} team selected successfully '
+                           f'(similarity={similarity:.4f} <= 0.85)')
                 return True
+
             self.device.sleep(0.2)
 
-        logger.warning(f'Battle {battle_num} team selection verification failed')
+        # 验证失败，保存详细信息
+        logger.warning(f'[DEBUG] Battle {battle_num} team selection verification failed')
+        logger.warning(f'[DEBUG] Final similarity: {last_similarity:.4f}, threshold: 0.85, '
+                      f'loops: {loop_count}, timeout: {timeout}s')
+
+        # 保存失败时的完整截图
+        save_image(self.device.image,
+                  f'./log/debug/team_verification/verify_failed_battle{battle_num}_{int(time.time()*1000)}.png')
+
+        # 保存裁剪区域
+        crop_image = crop(self.device.image, actual_button.search)
+        save_image(crop_image,
+                  f'./log/debug/team_verification/crop_battle{battle_num}_{int(time.time()*1000)}.png')
+
         return False
 
     def _configure_preset_teams(self, team1_preset: int = None, team2_preset: int = None):
@@ -673,7 +692,7 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam):
             # 选择预设编队
             logger.info(f'[DEBUG] Select preset team {team1_preset} for battle 1')
             self.select_preset_team(team1_preset)
-            self.device.sleep(0.3)
+            # 移除固定延迟，直接进入验证（验证方法会处理等待）
 
             # 验证选择成功
             if not self._verify_team_selected(battle_num=1):
@@ -683,12 +702,12 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam):
         if team2_preset:
             logger.info('[DEBUG] Switch to battle 2')
             self._click_battle_switch(2)
-            self.device.sleep(0.5)
+            # 移除固定延迟，让后续操作自适应
 
             # 直接选择预设编队（不需要再清除）
             logger.info(f'[DEBUG] Select preset team {team2_preset} for battle 2')
             self.select_preset_team(team2_preset)
-            self.device.sleep(0.3)
+            # 移除固定延迟，直接进入验证（验证方法会处理等待）
 
             # 验证选择成功
             if not self._verify_team_selected(battle_num=2):
