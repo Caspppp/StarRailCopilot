@@ -171,3 +171,36 @@ TEAM_SLOT_BATTLE2_EMPTY = ButtonWrapper(
         button=(935, 529, 1231, 593),
     ),
 )
+# 战斗失败检测
+# 注意：color 值对应 device.image 的实际颜色（RGB 格式）
+BATTLE_FAILED = ButtonWrapper(
+    name='BATTLE_FAILED',
+    share=Button(
+        file='./tools/forgotten_hall_navigator/assets/battle/BATTLE_FAILED.png',
+        area=(503, 105, 780, 161),
+        search=(483, 85, 800, 181),
+        color=(113, 38, 32),  # 从实际截图 RGB 提取
+        button=(503, 105, 780, 161),
+    ),
+)
+RETURN_TO_FORGOTTEN_HALL = ButtonWrapper(
+    name='RETURN_TO_FORGOTTEN_HALL',
+    share=[
+        # Success screen: button is center-bottom
+        Button(
+            file='./tools/forgotten_hall_navigator/assets/battle/RETURN_TO_FORGOTTEN_HALL_SUCCESS.png',
+            area=(562, 598, 716, 622),
+            search=(542, 578, 736, 642),
+            color=(161, 160, 158),  # 从成功页面截图 RGB 提取
+            button=(562, 598, 716, 622),
+        ),
+        # Failure screen: button is left-bottom (original position)
+        Button(
+            file='./tools/forgotten_hall_navigator/assets/battle/RETURN_TO_FORGOTTEN_HALL.png',
+            area=(388, 590, 543, 610),
+            search=(368, 570, 563, 630),
+            color=(149, 146, 144),  # 从失败页面截图 RGB 提取
+            button=(388, 590, 543, 610),
+        ),
+    ],
+)
