@@ -218,9 +218,13 @@ class Combat(CombatInteract, CombatPrepare, CombatSupport, CombatTeam, CombatSki
 
         for _ in self.loop():
             # End
-            if callable(expected_end) and expected_end():
-                logger.info(f'Combat execute ended at {expected_end.__name__}')
-                break
+            if callable(expected_end):
+                result = expected_end()
+                if result:
+                    logger.info(f'Combat execute ended at {expected_end.__name__}')
+                    break
+            elif expected_end is not None:
+                logger.warning(f'expected_end is not callable: {expected_end}')
             if (self.appear(COMBAT_AGAIN) and
                     self.image_color_count(COMBAT_AGAIN, color=(227, 227, 228), threshold=221, count=50)):
                 logger.info(f'Combat execute ended at {COMBAT_AGAIN}')
