@@ -7,7 +7,7 @@ from pponnxcr.predict_system import BoxedResult
 from module.base.base import ModuleBase
 from module.base.timer import Timer
 from module.base.utils import area_offset, color_similarity_2d, crop, save_image
-from module.logger.logger import logger
+from module.logger.logger import logger, logger_debug
 from module.ocr.keyword import Keyword
 from module.ocr.ocr import Ocr, OcrResultButton
 from module.ui.draggable_list import DraggableList
@@ -20,7 +20,8 @@ from tasks.forgotten_hall.assets.assets_forgotten_hall_nav import *
 from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import *
 from tasks.forgotten_hall.keywords import ForgottenHallStage, KEYWORDS_FORGOTTEN_HALL_STAGE
 from tasks.forgotten_hall.team import ForgottenHallTeam
-from tasks.map.control.joystick import MapControlJoystick
+from tasks.map.control.control import MapControl
+from tasks.map.control.joystick import JoystickContact, MapControlJoystick
 
 
 def detect_unlocked_text(image, search_area):
@@ -257,6 +258,42 @@ class ForgottenHallStageOcr(Ocr):
 
         return binary_3ch
 
+    def _product_button(
+            self,
+            boxed_result: BoxedResult,
+            keyword_classes,
+            lang: str = None,
+            ignore_punctuation=True,
+            ignore_digit=True,
+            star_count=None
+    ) -> OcrResultButton:
+        """
+        重写父类方法，支持星级信息
+
+        Args:
+            boxed_result: OCR结果
+            keyword_classes: 关键词类列表
+            lang: 语言
+            ignore_punctuation: 忽略标点
+            ignore_digit: 忽略纯数字
+            star_count: 星级数量（0-3）
+
+        Returns:
+            OcrResultButton: 包含星级信息的按钮对象
+        """
+        if not isinstance(keyword_classes, list):
+            keyword_classes = [keyword_classes]
+
+        matched_keyword = self._match_result(
+            boxed_result.ocr_text,
+            keyword_classes=keyword_classes,
+            lang=lang,
+            ignore_punctuation=ignore_punctuation,
+            ignore_digit=ignore_digit,
+        )
+        button = OcrResultButton(boxed_result, matched_keyword, star_count=star_count)
+        return button
+
     def matched_ocr(self, image, keyword_classes, direct_ocr=False) -> list[OcrResultButton]:
         if not isinstance(keyword_classes, list):
             keyword_classes = [keyword_classes]
@@ -286,8 +323,41 @@ class ForgottenHallStageOcr(Ocr):
             for index, (text, score) in enumerate(results)
         ]
 
-        results = [self._product_button(result, keyword_classes, ignore_digit=False) for result in results]
-        results = [result for result in results if result.is_keyword_matched]
+        # 星级检测（新增）
+        from tools.forgotten_hall_star_detector.star_detector import (
+            detect_yellow_stars,
+            cluster_stars_by_proximity,
+            match_stars_to_stages
+        )
+
+        star_regions = detect_yellow_stars(image)
+        star_clusters = cluster_stars_by_proximity(star_regions)
+        stage_star_map = match_stars_to_stages(star_clusters, boxes)
+
+        # 创建按钮并输出详细星级信息
+        temp_results = []
+        for index, result in enumerate(results):
+            star_count = stage_star_map.get(index, 0)
+            button = self._product_button(
+                result,
+                keyword_classes,
+                ignore_digit=False,
+                star_count=star_count
+            )
+
+            # 输出每一关的星级信息（仅输出匹配成功的关卡）
+            if button.is_keyword_matched:
+                stage_name = button.matched_keyword
+                if star_count == 3:
+                    logger.info(f'[ForgottenHallStageOcr] {stage_name}: ★★★ (已完成)')
+                elif star_count > 0:
+                    logger.info(f'[ForgottenHallStageOcr] {stage_name}: {"★" * star_count}{"☆" * (3 - star_count)}')
+                else:
+                    logger.info(f'[ForgottenHallStageOcr] {stage_name}: ☆☆☆ (未完成)')
+
+            temp_results.append(button)
+
+        results = [r for r in temp_results if r.is_keyword_matched]
 
         # 未解锁关卡检测 - 检测已识别关卡下方的"未解锁"文字
         if results and boxes:
@@ -419,7 +489,7 @@ STAGE_LIST = DraggableStageList("ForgottenHallStageList", keyword_class=Forgotte
                                 check_row_order=False, drag_direction="right")
 
 
-class ForgottenHallUI(DungeonUI, ForgottenHallTeam):
+class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
     def stage_choose(self, dungeon: DungeonList, skip_first_screenshot=True):
         """
         Pages:
@@ -518,21 +588,33 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam):
 
         # 配置预设编队
         if team1_preset or team2_preset:
-            self._click_preset_team()
+            logger.hr('Configure preset teams', level=1)
+
+            # 点击预设编队按钮（增加超时，失败仅警告）
+            self._click_preset_team(timeout=15)
+
+            # 配置预设编队（增加等待和重试，失败仅警告）
             self._configure_preset_teams(team1_preset, team2_preset)
+
+            logger.info('Preset teams configuration completed')
 
         return True
 
-    def _click_preset_team(self, skip_first_screenshot=False):
-        """点击预设编队按钮并验证面板已打开
+    def _click_preset_team(self, skip_first_screenshot=False, timeout=15):
+        """点击预设编队按钮并等待面板打开
+
+        Args:
+            skip_first_screenshot: 是否跳过第一次截图
+            timeout: 超时时间（秒），默认 15 秒
 
         Pages:
             in: 关卡选择完成后
             out: 预设编队面板
         """
         logger.info('Click preset team button')
-        timeout = Timer(5).start()
-        interval = Timer(1)
+        timeout_timer = Timer(timeout).start()
+        interval = Timer(1.5)  # 点击间隔
+        check_interval = 0.5  # 检测间隔缩短到 0.5 秒
         just_clicked = False  # 标记是否刚点击过
 
         while 1:
@@ -541,30 +623,34 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam):
             else:
                 self.device.screenshot()
 
-            if timeout.reached():
-                logger.warning('Click preset team timeout')
+            # 超时检测 - 仅警告，不中断
+            if timeout_timer.reached():
+                logger.warning(f'Click preset team timeout after {timeout}s')
+                logger.warning('Preset team panel may not have opened, but continuing...')
                 break
 
             # 使用新的预设编队面板检测模板
             if self.appear(PRESET_TEAM_PANEL_OPENED):
-                logger.info('Preset team panel opened')
+                logger.info('Preset team panel opened successfully')
                 break
 
             # 如果刚点击过但检测失败，继续循环等待面板出现
             if just_clicked:
-                logger.info('Waiting for preset team panel to appear...')
+                logger.info(f'Waiting for preset team panel (checking every {check_interval}s)...')
+                self.device.sleep(check_interval)
                 just_clicked = False
-                # 移除固定延迟，依靠循环检测（screenshot()间隔已提供适当延迟）
                 continue
 
             # 点击预设编队按钮
             if interval.reached() and self.appear(PRESET_TEAM):
-                logger.info(f'[DEBUG] Clicking PRESET_TEAM button')
+                logger.info('Clicking PRESET_TEAM button...')
                 self.device.click(PRESET_TEAM)
                 interval.reset()
-                logger.info('Preset team button clicked')
                 just_clicked = True
                 continue
+
+            # 持续检测（即使没有点击）
+            self.device.sleep(check_interval)
 
     def _verify_team_cleared(self, battle_num: int, timeout: float = 2.0) -> bool:
         """验证队伍已被清除（匹配空白模板）
@@ -603,16 +689,17 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam):
         # 获取实际的 Button 对象（ButtonWrapper 包含多个 Button）
         actual_button = button.buttons[0]
 
-        logger.info(f'[DEBUG] Start verifying battle {battle_num} team selection')
+        logger.debug(f'Start verifying battle {battle_num} team selection')
 
         # 给界面一个短暂的初始延迟，避免立即检测时界面尚未开始刷新
         self.device.sleep(0.2)
 
-        # 保存验证开始时的截图
+        # 保存验证开始时的截图（仅调试模式）
         self.device.screenshot()
-        os.makedirs('./log/debug/team_verification', exist_ok=True)
-        save_image(self.device.image,
-                  f'./log/debug/team_verification/verify_start_battle{battle_num}_{int(time.time()*1000)}.png')
+        if logger_debug:
+            os.makedirs('./log/debug/team_verification', exist_ok=True)
+            save_image(self.device.image,
+                      f'./log/debug/team_verification/verify_start_battle{battle_num}_{int(time.time()*1000)}.png')
 
         timer = Timer(timeout).start()
         loop_count = 0
@@ -625,28 +712,25 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam):
             # 获取匹配相似度
             image = crop(self.device.image, actual_button.search, copy=False)
 
-            # Debug: 输出图像尺寸
+            # Debug: 输出图像尺寸（仅调试模式）
             if loop_count == 1:
-                logger.info(f'[DEBUG] Template image shape: {actual_button.image.shape}')
-                logger.info(f'[DEBUG] Search region shape: {image.shape}')
-                logger.info(f'[DEBUG] Search area: {actual_button.search}')
-                logger.info(f'[DEBUG] Button area: {actual_button.area}')
-                # 保存模板图像供检查
-                save_image(actual_button.image,
-                          f'./log/debug/team_verification/template_battle{battle_num}_{int(time.time()*1000)}.png')
+                logger.debug(f'Template shape: {actual_button.image.shape}, search shape: {image.shape}')
+                logger.debug(f'Search area: {actual_button.search}, button area: {actual_button.area}')
+                # 保存模板图像供检查（仅调试模式）
+                if logger_debug:
+                    save_image(actual_button.image,
+                              f'./log/debug/team_verification/template_battle{battle_num}_{int(time.time()*1000)}.png')
 
             res = cv2.matchTemplate(actual_button.image, image, cv2.TM_CCOEFF_NORMED)
             _, similarity, _, point = cv2.minMaxLoc(res)
             last_similarity = similarity
 
-            # Debug: 输出匹配结果的形状
+            # Debug: 输出匹配结果（仅调试模式）
             if loop_count == 1:
-                logger.info(f'[DEBUG] Match result shape: {res.shape}')
-                logger.info(f'[DEBUG] Match point: {point}')
+                logger.debug(f'Match result shape: {res.shape}, match point: {point}')
 
-            logger.info(f'[DEBUG] Battle {battle_num} verification loop {loop_count}: '
-                       f'similarity={similarity:.4f}, threshold=0.85, '
-                       f'elapsed={timer.current_time():.2f}s')
+            logger.debug(f'Verification loop {loop_count}: similarity={similarity:.4f}, '
+                        f'threshold=0.85, elapsed={timer.current_time():.2f}s')
 
             # 判断是否匹配（使用默认阈值 0.85）
             if similarity <= 0.85:  # 不匹配空白模板，说明有队伍了
@@ -657,23 +741,49 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam):
             self.device.sleep(0.2)
 
         # 验证失败，保存详细信息
-        logger.warning(f'[DEBUG] Battle {battle_num} team selection verification failed')
-        logger.warning(f'[DEBUG] Final similarity: {last_similarity:.4f}, threshold: 0.85, '
-                      f'loops: {loop_count}, timeout: {timeout}s')
+        logger.warning(f'Battle {battle_num} team selection verification failed')
+        logger.debug(f'Final similarity: {last_similarity:.4f}, threshold: 0.85, '
+                    f'loops: {loop_count}, timeout: {timeout}s')
 
-        # 保存失败时的完整截图
-        save_image(self.device.image,
-                  f'./log/debug/team_verification/verify_failed_battle{battle_num}_{int(time.time()*1000)}.png')
+        # 保存失败时的完整截图（仅调试模式）
+        if logger_debug:
+            save_image(self.device.image,
+                      f'./log/debug/team_verification/verify_failed_battle{battle_num}_{int(time.time()*1000)}.png')
 
-        # 保存裁剪区域
-        crop_image = crop(self.device.image, actual_button.search)
-        save_image(crop_image,
-                  f'./log/debug/team_verification/crop_battle{battle_num}_{int(time.time()*1000)}.png')
+            # 保存裁剪区域
+            crop_image = crop(self.device.image, actual_button.search)
+            save_image(crop_image,
+                      f'./log/debug/team_verification/crop_battle{battle_num}_{int(time.time()*1000)}.png')
 
         return False
 
+    def _verify_team_selected_with_retry(self, battle_num: int, max_retry=3, retry_delay=2):
+        """验证队伍选择，失败后重试（最终失败仅警告）
+
+        Args:
+            battle_num: 关卡编号（1=上半，2=下半）
+            max_retry: 最大重试次数，默认 3 次
+            retry_delay: 重试间隔（秒），默认 2 秒
+        """
+        for attempt in range(1, max_retry + 1):
+            logger.info(f'Verifying battle {battle_num} team selection (attempt {attempt}/{max_retry})...')
+
+            # 调用现有的 _verify_team_selected() 方法
+            if self._verify_team_selected(battle_num=battle_num):
+                logger.info(f'Battle {battle_num} team selection verified successfully')
+                return  # 验证成功，返回
+
+            # 验证失败，准备重试
+            if attempt < max_retry:
+                logger.warning(f'Battle {battle_num} team verification failed, retrying in {retry_delay}s...')
+                self.device.sleep(retry_delay)
+            else:
+                # 最终失败，仅警告不中断
+                logger.warning(f'Battle {battle_num} team verification failed after {max_retry} attempts')
+                logger.warning('Team may not be correctly selected, but continuing...')
+
     def _configure_preset_teams(self, team1_preset: int = None, team2_preset: int = None):
-        """配置两关的预设编队
+        """配置两关的预设编队（增加等待和验证，失败不中断）
 
         Args:
             team1_preset: 第一关使用的预设编队编号 (1-12, 1-based)
@@ -681,37 +791,49 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam):
         """
         # ========== 在开始配置前，先清除所有已有队伍（只清除一次） ==========
         if team1_preset or team2_preset:
-            logger.info('[DEBUG] Clear all existing team selections before configuration')
+            logger.info('Clearing all existing team selections...')
             self.device.click(CLEAR_TEAM)
-            self.device.sleep(0.5)  # 等待清除完成
+
+            # 新增：等待并验证清除成功
+            timeout = Timer(5).start()  # 增加超时到 5 秒
+            cleared = False
+            while not timeout.reached():
+                self.device.screenshot()
+                if self.appear(TEAM_SLOT_BATTLE1_EMPTY):
+                    logger.info('Team slots cleared successfully')
+                    cleared = True
+                    break
+                self.device.sleep(0.5)  # 检测间隔 0.5 秒
+
+            if not cleared:
+                logger.warning('Team slots clear verification timeout, but continuing...')
 
         # ========== 配置第一关队伍 ==========
         if team1_preset:
-            logger.info(f'[DEBUG] Configuring battle 1 with preset team {team1_preset}')
+            logger.info(f'Configuring battle 1 with preset team {team1_preset}')
 
-            # 选择预设编队
-            logger.info(f'[DEBUG] Select preset team {team1_preset} for battle 1')
+            # 选择预设编队（内部已有重试逻辑）
             self.select_preset_team(team1_preset)
-            # 移除固定延迟，直接进入验证（验证方法会处理等待）
 
-            # 验证选择成功
-            if not self._verify_team_selected(battle_num=1):
-                logger.warning('[DEBUG] Battle 1 team selection verification failed')
+            # 等待并验证选择（增加重试）
+            self._verify_team_selected_with_retry(battle_num=1, max_retry=3)
 
         # ========== 切换到第二关并配置队伍 ==========
         if team2_preset:
-            logger.info('[DEBUG] Switch to battle 2')
-            self._click_battle_switch(2)
-            # 移除固定延迟，让后续操作自适应
+            logger.info('Switching to battle 2...')
 
-            # 直接选择预设编队（不需要再清除）
-            logger.info(f'[DEBUG] Select preset team {team2_preset} for battle 2')
+            # 切换下半并等待验证
+            self._click_battle_switch_with_wait(2, timeout=5)
+
+            logger.info(f'Configuring battle 2 with preset team {team2_preset}')
+
+            # 选择预设编队
             self.select_preset_team(team2_preset)
-            # 移除固定延迟，直接进入验证（验证方法会处理等待）
 
-            # 验证选择成功
-            if not self._verify_team_selected(battle_num=2):
-                logger.warning('[DEBUG] Battle 2 team selection verification failed')
+            # 等待并验证选择
+            self._verify_team_selected_with_retry(battle_num=2, max_retry=3)
+
+        logger.info('Preset teams configuration process completed')
 
     # ========== 预设编队滚动条检测与选择 ==========
     # 几何常量
@@ -961,6 +1083,36 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam):
             self.device.click(BATTLE_2_SWITCH)
             self.device.sleep(0.5)
 
+    def _click_battle_switch_with_wait(self, battle_num: int, timeout=5):
+        """切换到指定关卡并等待验证（失败不中断）
+
+        Args:
+            battle_num: 关卡编号（2=下半）
+            timeout: 超时时间（秒），默认 5 秒
+        """
+        if battle_num == 2:
+            logger.info('Clicking battle 2 switch...')
+            self.device.click(BATTLE_2_SWITCH)
+
+            # 等待并验证切换成功
+            timer = Timer(timeout).start()
+            switched = False
+
+            while not timer.reached():
+                self.device.screenshot()
+                # 检测下半空白槽位出现
+                if self.appear(TEAM_SLOT_BATTLE2_EMPTY):
+                    logger.info('Successfully switched to battle 2')
+                    switched = True
+                    break
+                self.device.sleep(0.5)  # 检测间隔 0.5 秒
+
+            if not switched:
+                logger.warning(f'Battle 2 switch verification timeout after {timeout}s')
+                logger.warning('Switch may have failed, but continuing...')
+        else:
+            logger.warning(f'Unsupported battle number: {battle_num}')
+
     def exit_dungeon(self, skip_first_screenshot=True):
         """
         Pages:
@@ -985,6 +1137,204 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam):
                 continue
             if self.handle_popup_single():
                 continue
+
+    def detect_battle_result(self, timeout=10, skip_first_screenshot=True):
+        """
+        Detect battle result after combat_execute() completes
+
+        Args:
+            timeout: Maximum time to wait for result detection (seconds)
+            skip_first_screenshot: Whether to skip first screenshot
+
+        Returns:
+            str: 'success', 'failure', or 'timeout'
+
+        Pages:
+            in: After combat_execute()
+            out: COMBAT_AGAIN (success) or BATTLE_FAILED (failure)
+        """
+        from tasks.combat.assets.assets_combat_finish import COMBAT_AGAIN
+        from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import BATTLE_FAILED
+
+        logger.hr('Detect battle result', level=2)
+        timer = Timer(timeout).start()
+        stuck_clear_timer = Timer(10).start()  # 每 10 秒清除一次 stuck record
+
+        while not timer.reached():
+            if skip_first_screenshot:
+                skip_first_screenshot = False
+            else:
+                self.device.screenshot()
+
+            # 定期清除 stuck record（遵循 SRC 官方模式，参考 tasks/login/login.py）
+            # 解决 handle_combat_damage_change() 失效导致的 wait too long 问题
+            if stuck_clear_timer.reached():
+                logger.info('[detect_battle_result] Clear stuck record (10s interval)')
+                self.device.stuck_record_clear()
+                stuck_clear_timer.reset()
+
+            # 使用 appear() + interval 替代 match_template_color()
+            if self.appear(COMBAT_AGAIN, interval=0.5):
+                logger.info('Battle succeeded - COMBAT_AGAIN detected')
+                return 'success'
+
+            if self.appear(BATTLE_FAILED, interval=0.5):
+                logger.info('Battle failed - BATTLE_FAILED detected')
+                return 'failure'
+
+            self.device.sleep(0.5)
+
+        logger.warning(f'Battle result detection timeout after {timeout}s')
+        return 'timeout'
+
+    def handle_battle_failure(self, skip_first_screenshot=False):
+        """
+        Handle battle failure screen and return to stage selection
+
+        Args:
+            skip_first_screenshot: Whether to skip first screenshot
+
+        Returns:
+            bool: True if successfully returned to stage selection
+
+        Pages:
+            in: BATTLE_FAILED screen
+            out: FORGOTTEN_HALL_CHECK (stage selection)
+        """
+        from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import RETURN_TO_FORGOTTEN_HALL
+
+        logger.hr('Handle battle failure', level=2)
+        timeout = Timer(10).start()
+        clicked_return = False
+
+        while not timeout.reached():
+            if skip_first_screenshot:
+                skip_first_screenshot = False
+            else:
+                self.device.screenshot()
+
+            # End condition: back at stage selection
+            if self.appear(FORGOTTEN_HALL_CHECK):
+                logger.info('Successfully returned to stage selection')
+                self.device.screenshot()
+                STAGE_LIST.load_rows(main=self)
+                return True
+
+            # Click return button using match_template_color for better detection
+            if not clicked_return and self.match_template_color(RETURN_TO_FORGOTTEN_HALL, interval=2):
+                self.device.click(RETURN_TO_FORGOTTEN_HALL)
+                logger.info('Clicked return to forgotten hall button')
+                clicked_return = True
+                continue
+
+        logger.error('Failed to return to stage selection after battle failure')
+        return False
+
+    def handle_battle_success(self):
+        """
+        Handle battle success by clicking through reward screens
+
+        Returns:
+            bool: True if successfully handled
+
+        Pages:
+            in: COMBAT_AGAIN screen
+            out: FORGOTTEN_HALL_CHECK
+        """
+        from tasks.combat.assets.assets_combat_finish import COMBAT_AGAIN
+
+        logger.hr('Handle battle success', level=2)
+        timeout = Timer(15).start()
+
+        while not timeout.reached():
+            self.device.screenshot()
+
+            if self.appear(FORGOTTEN_HALL_CHECK):
+                logger.info('Battle success handled, returned to forgotten hall')
+                return True
+
+            if self.appear_then_click(COMBAT_AGAIN, interval=3):
+                continue
+
+            if self.handle_reward(interval=2):
+                continue
+
+            if self.handle_popup_confirm():
+                continue
+            if self.handle_popup_single():
+                continue
+
+            self.device.sleep(0.5)
+
+        logger.warning('Battle success handling timeout')
+        return True
+
+    def enter_and_battle_with_retry(self, max_retries=3, skip_first_screenshot=True):
+        """
+        Enter dungeon, battle, and auto-retry on failure
+
+        Args:
+            max_retries: Maximum number of retry attempts
+            skip_first_screenshot: Whether to skip first screenshot
+
+        Returns:
+            tuple: (success: bool, attempts_used: int)
+
+        Pages:
+            in: FORGOTTEN_HALL_CHECK (stage selection)
+            out: FORGOTTEN_HALL_CHECK (after battle)
+        """
+        logger.hr('Enter dungeon with auto-retry enabled', level=1)
+        logger.attr('MaxRetries', max_retries)
+
+        for attempt in range(1, max_retries + 1):
+            logger.hr(f'Battle Attempt {attempt}/{max_retries}', level=2)
+
+            # Step 1: Enter dungeon
+            logger.info(f'Attempt {attempt}: Entering dungeon')
+            self.enter_forgotten_hall_dungeon(skip_first_screenshot=skip_first_screenshot)
+            skip_first_screenshot = False
+
+            # Step 2: Detect result
+            logger.info(f'Attempt {attempt}: Detecting battle result')
+            result = self.detect_battle_result(timeout=10)
+
+            # Step 3: Handle result
+            if result == 'success':
+                logger.info(f'Battle succeeded on attempt {attempt}/{max_retries}')
+                self.handle_battle_success()
+                return (True, attempt)
+
+            elif result == 'failure':
+                logger.warning(f'Battle failed on attempt {attempt}/{max_retries}')
+
+                if not self.handle_battle_failure():
+                    logger.error(f'Failed to return to stage selection, cannot retry')
+                    return (False, attempt)
+
+                if attempt >= max_retries:
+                    logger.error(f'Max retries ({max_retries}) exceeded, giving up')
+                    return (False, attempt)
+
+                logger.info(f'Waiting 2s before retry attempt {attempt+1}')
+                self.device.sleep(2.0)
+                continue
+
+            else:  # timeout
+                logger.error(f'Battle result detection timeout on attempt {attempt}')
+                logger.info('Attempting to exit dungeon after timeout')
+                self.exit_dungeon()
+
+                if attempt >= max_retries:
+                    logger.error(f'Max retries ({max_retries}) exceeded after timeout')
+                    return (False, attempt)
+
+                logger.info(f'Retrying after timeout, attempt {attempt+1}')
+                self.device.sleep(2.0)
+                continue
+
+        logger.error('Unexpected exit from retry loop')
+        return (False, max_retries)
 
     def enter_forgotten_hall_dungeon(self, skip_first_screenshot=True):
         """
@@ -1015,15 +1365,272 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam):
                 self.device.click(ENTER_FORGOTTEN_HALL_DUNGEON)
                 interval.reset()
 
-        joystick = MapControlJoystick(self.config, self.device)
-        skip_first_screenshot = True
-        while 1:  # pop up -> dungeon inside
+        # Dungeon entered, start auto engage enemy
+        logger.info('Dungeon entered, starting auto engage enemy')
+        success = self.auto_engage_enemy(move_duration=8, timeout=15)
+        if success:
+            logger.info('Successfully engaged enemy, executing combat')
+
+            # Define battle end detection function
+            def is_battle_end():
+                """Check if battle has ended (success or failure)"""
+                try:
+                    from tasks.combat.assets.assets_combat_finish import COMBAT_AGAIN
+                    from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import BATTLE_FAILED
+
+                    # 定期清除 stuck record（遵循 SRC 官方模式，参考 tasks/login/login.py）
+                    # 解决 handle_combat_damage_change() 失效导致的 wait too long 问题
+                    if not hasattr(self, '_battle_end_stuck_timer'):
+                        from module.base.timer import Timer
+                        self._battle_end_stuck_timer = Timer(10).start()
+
+                    if self._battle_end_stuck_timer.reached():
+                        logger.info('[is_battle_end] Clear stuck record (10s interval)')
+                        self.device.stuck_record_clear()
+                        self._battle_end_stuck_timer.reset()
+
+                    # 使用 appear() + interval 检测战斗结束
+                    if self.appear(BATTLE_FAILED, interval=0.5):
+                        logger.info('[is_battle_end] BATTLE_FAILED detected')
+                        return True
+
+                    if self.appear(COMBAT_AGAIN, interval=0.5):
+                        logger.info('[is_battle_end] COMBAT_AGAIN detected')
+                        return True
+
+                    return False
+                except Exception as e:
+                    logger.error(f'[is_battle_end] Exception: {e}')
+                    return False
+
+            # Execute combat with custom end detection
+            logger.info(f'[DEBUG] Passing expected_end={is_battle_end}, callable={callable(is_battle_end)}')
+            self.combat_execute(expected_end=is_battle_end)
+            logger.info('[DEBUG] combat_execute() returned')
+        else:
+            logger.warning('Failed to auto-engage enemy')
+
+    def auto_engage_enemy(self, move_duration=8, timeout=15, skip_first_screenshot=True):
+        """
+        Automatically move forward and engage enemy in forgotten hall dungeon.
+        Uses simple forward movement with continuous enemy detection.
+
+        Args:
+            move_duration: How long to move forward (seconds), default 8
+            timeout: Maximum time to spend trying to find enemy (seconds), default 15
+            skip_first_screenshot: Whether to skip first screenshot
+
+        Returns:
+            bool: True if successfully engaged in combat, False otherwise
+
+        Pages:
+            in: DUNGEON_ENTER_CHECKED (just entered dungeon)
+            out: is_combat_executing() or timeout
+        """
+        logger.hr('Auto engage enemy', level=1)
+        logger.attr('MoveDuration', move_duration)
+        logger.attr('Timeout', timeout)
+
+        # Initialize timers
+        move_timer = Timer(move_duration).start()
+        timeout_timer = Timer(timeout).start()
+        enemy_check_interval = Timer(0.3).start()
+        movement_interval = Timer(0.5).start()
+
+        # Phase 1: Move forward while detecting enemies
+        logger.info('Phase 1: Moving forward and detecting enemies')
+        with JoystickContact(self) as contact:
+            while not move_timer.reached():
+                if skip_first_screenshot:
+                    skip_first_screenshot = False
+                else:
+                    self.device.screenshot()
+
+                # Check if already in combat (early success)
+                if self.is_combat_executing():
+                    logger.info('Entered combat during movement')
+                    return True
+
+                # Enable 2x running
+                self.handle_map_run_2x()
+
+                # Set joystick to move forward (direction=0 means forward)
+                if movement_interval.reached():
+                    contact.set(direction=0, run=True)
+                    movement_interval.reset()
+
+                # Enemy detection
+                if enemy_check_interval.reached():
+                    self.aim.predict(self.device.image, enemy=True, item=False, show_log=False)
+                    if self.aim.aimed_enemy:
+                        logger.info(f'Enemy detected at {self.aim.aimed_enemy}')
+                        # Click attack button
+                        self.handle_map_A()
+                    enemy_check_interval.reset()
+
+                # Check timeout
+                if timeout_timer.reached():
+                    logger.warning('Auto engage timeout during movement phase')
+                    break
+
+        # Phase 2: Continue searching for enemy without movement
+        logger.info('Phase 2: Stationary enemy search')
+        while not timeout_timer.reached():
             if skip_first_screenshot:
                 skip_first_screenshot = False
             else:
                 self.device.screenshot()
 
-            if self.match_template_color(DUNGEON_ENTER_CHECKED):
-                logger.info("Forgotten hall dungeon entered")
-                break
-            joystick.handle_map_run_2x()
+            # Check combat
+            if self.is_combat_executing():
+                logger.info('Entered combat after movement')
+                return True
+
+            # Keep detecting and attacking
+            if enemy_check_interval.reached():
+                self.aim.predict(self.device.image, enemy=True, item=False, show_log=False)
+                if self.aim.aimed_enemy:
+                    logger.info(f'Enemy detected at {self.aim.aimed_enemy}')
+                    self.handle_map_A()
+                enemy_check_interval.reset()
+
+        # Phase 3: Fallback mechanism
+        logger.warning('Auto engage enemy timeout, using combat_poor_try fallback')
+        result = self.combat_poor_try()
+        success = len(result) > 0
+        if success:
+            logger.info('Combat engaged via fallback mechanism')
+        else:
+            logger.warning('Failed to engage enemy even with fallback')
+        return success
+
+    def scan_all_stages(self, max_stage: int = 12) -> dict:
+        """
+        扫描所有关卡的星数状态
+
+        通过左右滑动关卡列表，识别所有可见关卡的星数
+        利用现有的 STAGE_LIST.load_rows() 和 OcrResultButton.star_count
+
+        Args:
+            max_stage: 最大关卡数（混沌回忆=12, 忘却之庭=15）
+
+        Returns:
+            dict[int, int]: {关卡编号: 星数} 映射
+            例如: {1: 3, 2: 3, 3: 2, 4: 0, ...}
+
+        Pages:
+            in: FORGOTTEN_HALL_CHECK (关卡选择界面)
+            out: FORGOTTEN_HALL_CHECK (关卡选择界面)
+        """
+        logger.hr('Scan all stages', level=2)
+        stage_stars = {}
+        scanned_stages = set()
+
+        # 先滑动到最左边（第1关）
+        logger.info('Scrolling to stage 1')
+        stage_1 = KEYWORDS_FORGOTTEN_HALL_STAGE.Stage_1
+        STAGE_LIST.insight_row(stage_1, main=self)
+
+        # 分批扫描
+        max_scroll_attempts = 5
+        scroll_count = 0
+
+        while len(scanned_stages) < max_stage and scroll_count < max_scroll_attempts:
+            self.device.screenshot()
+            STAGE_LIST.load_rows(main=self)
+
+            # 从当前可见关卡中提取星数
+            new_stages_found = False
+            for button in STAGE_LIST.cur_buttons:
+                if button.matched_keyword:
+                    stage_num = button.matched_keyword.id
+                    if stage_num not in scanned_stages and stage_num <= max_stage:
+                        star_count = button.star_count if button.star_count is not None else 0
+                        stage_stars[stage_num] = star_count
+                        scanned_stages.add(stage_num)
+                        new_stages_found = True
+                        logger.info(f'Stage {stage_num}: {star_count} stars')
+
+            # 如果还没扫描完且有新发现，向右滑动
+            if len(scanned_stages) < max_stage:
+                if not new_stages_found:
+                    # 没有新关卡，可能已经到头了
+                    logger.info('No new stages found, stopping scan')
+                    break
+                logger.info(f'Scrolling right, scanned {len(scanned_stages)}/{max_stage} stages')
+                STAGE_LIST.drag_page('right', main=self)
+                self.device.sleep(0.5)
+                scroll_count += 1
+
+        # 填充未扫描到的关卡为0星
+        for i in range(1, max_stage + 1):
+            if i not in stage_stars:
+                stage_stars[i] = 0
+                logger.warning(f'Stage {i} not scanned, assuming 0 stars')
+
+        logger.info(f'Scan complete: {stage_stars}')
+        return stage_stars
+
+    def find_starting_stage(self, stage_stars: dict, target_stars: int = 3, max_stage: int = 12) -> int:
+        """
+        根据星数扫描结果确定起始挑战关卡
+
+        逻辑：
+        1. 如果最高关卡已达目标星数，返回 -1 (任务完成)
+        2. 否则找到最高的未达目标星数的解锁关卡
+
+        Args:
+            stage_stars: scan_all_stages() 返回的星数映射
+            target_stars: 目标星数（默认3）
+            max_stage: 最大关卡数
+
+        Returns:
+            int: 起始关卡编号，-1 表示全部完成
+        """
+        # 检查最高关卡是否已完成
+        if stage_stars.get(max_stage, 0) >= target_stars:
+            logger.info(f'Stage {max_stage} already has {target_stars}+ stars, task complete')
+            return -1
+
+        # 从最高关卡向下找第一个可挑战的关卡
+        # 关卡解锁条件：前一关已通关（星数>0）或是第1关
+        for stage in range(max_stage, 0, -1):
+            stars = stage_stars.get(stage, 0)
+            if stars < target_stars:
+                # 检查是否解锁（前一关有星数或是第1关）
+                if stage == 1 or stage_stars.get(stage - 1, 0) > 0:
+                    logger.info(f'Starting stage: {stage} (current: {stars} stars, target: {target_stars})')
+                    return stage
+
+        # 理论上不会到达这里
+        logger.warning('No starting stage found, starting from stage 1')
+        return 1
+
+    def get_stage_star_count(self, stage_num: int) -> int:
+        """
+        获取指定关卡的当前星数
+
+        在战斗结束返回关卡选择界面后调用，
+        用于判断是否达成目标星数
+
+        Args:
+            stage_num: 关卡编号
+
+        Returns:
+            int: 星数 (0-3)，未找到返回 -1
+        """
+        # 确保关卡在视野内
+        stage_keyword = getattr(KEYWORDS_FORGOTTEN_HALL_STAGE, f'Stage_{stage_num}')
+        STAGE_LIST.insight_row(stage_keyword, main=self)
+
+        self.device.screenshot()
+        STAGE_LIST.load_rows(main=self)
+
+        for button in STAGE_LIST.cur_buttons:
+            if button.matched_keyword and button.matched_keyword.id == stage_num:
+                star_count = button.star_count if button.star_count is not None else 0
+                logger.info(f'Stage {stage_num} current stars: {star_count}')
+                return star_count
+
+        logger.warning(f'Stage {stage_num} not found in current view')
+        return -1
