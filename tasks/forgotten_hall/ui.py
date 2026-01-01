@@ -182,10 +182,10 @@ class ForgottenHallStageOcr(Ocr):
             h = stats[i, cv2.CC_STAT_HEIGHT]
             comp_area = stats[i, cv2.CC_STAT_AREA]
 
-            # 单字符过滤条件（更宽松，适应"1"等细长数字）
-            # 宽度：5-50px（"1"很细，可能只有5-8px）
-            # 高度：15-50px
-            if not (5 <= w <= 50 and 15 <= h <= 50):
+            # 单字符过滤条件
+            # 宽度：3-50px
+            # 高度：10-50px
+            if not (3 <= w <= 50 and 10 <= h <= 50):
                 continue
 
             # 宽高比：0.1-3.0（"1"非常细长）
@@ -193,8 +193,8 @@ class ForgottenHallStageOcr(Ocr):
             if not (0.1 <= aspect_ratio <= 3.0):
                 continue
 
-            # 面积：>130（"1"的面积约142）
-            if comp_area < 130:
+            # 面积：>30（过滤水晶边缘等小干扰）
+            if comp_area < 30:
                 continue
 
             # 位置过滤：必须在有效数字区域内
@@ -229,11 +229,12 @@ class ForgottenHallStageOcr(Ocr):
 
                 # 判断是否相邻：
                 # 1. Y坐标接近（同一行）- 允许15px差异
-                # 2. X坐标间距合理（相邻数字）- 允许40px间距
+                # 2. X坐标间距合理（相邻数字）- 允许-5到50px间距
+                #    负值表示重叠，0表示相连，正值表示间隔
                 y_diff = abs(box1['y'] - box2['y'])
                 x_gap = box2['x'] - box1['x2']
 
-                if y_diff < 15 and 0 < x_gap < 40:
+                if y_diff < 15 and -5 <= x_gap <= 50:
                     # 合并两个字符
                     merged_x1 = min(box1['x1'], box2['x1'])
                     merged_y1 = min(box1['y1'], box2['y1'])
@@ -241,7 +242,7 @@ class ForgottenHallStageOcr(Ocr):
                     merged_y2 = max(box1['y2'], box2['y2'])
 
                     # 转换为绝对坐标并添加padding
-                    padding = 10
+                    padding = 20
                     abs_x1 = max(0, merged_x1 + area[0] - padding)
                     abs_y1 = max(0, merged_y1 + area[1] - padding)
                     abs_x2 = min(raw.shape[1], merged_x2 + area[0] + padding)
@@ -255,7 +256,7 @@ class ForgottenHallStageOcr(Ocr):
 
             # 如果没有找到相邻字符，保留单个字符（如"7"、"8"、"9"）
             if not merged:
-                padding = 10
+                padding = 20
                 abs_x1 = max(0, box1['x1'] + area[0] - padding)
                 abs_y1 = max(0, box1['y1'] + area[1] - padding)
                 abs_x2 = min(raw.shape[1], box1['x2'] + area[0] + padding)
@@ -267,7 +268,9 @@ class ForgottenHallStageOcr(Ocr):
 
         # 调试日志
         if len(rectangles) > 0:
-            logger.info(f"[ForgottenHallStageOcr] Found {len(rectangles)} digit regions: {debug_info}")
+            logger.info(f"[ForgottenHallStageOcr] Found {len(rectangles)} digit regions")
+            for i, (info, rect) in enumerate(zip(debug_info, rectangles)):
+                logger.info(f"  Region {i+1}: {info} -> box={rect}")
         else:
             logger.warning(f"[ForgottenHallStageOcr] No digit regions found! Components: {num_labels-1}")
 
@@ -277,24 +280,17 @@ class ForgottenHallStageOcr(Ocr):
         """
         对关卡数字图像进行预处理，提高OCR识别准确率
 
-        使用纯白色提取策略（与 _find_number() 保持一致）：
-        严格提取纯白色(255,255,255)像素，不包含任何背景元素
+        不进行预处理，直接返回原始图像
+        （测试发现纯白色提取会导致某些数字识别失败）
 
         Args:
             image (np.ndarray): BGR图像，形状 (height, width, 3)
 
         Returns:
-            np.ndarray: 二值化图像（3通道），形状 (height, width, 3)
+            np.ndarray: 原始图像
         """
-        # 【关键】使用纯白色提取，与 _find_number() 保持一致
-        lower_white = np.array([255, 255, 255], dtype=np.uint8)
-        upper_white = np.array([255, 255, 255], dtype=np.uint8)
-        pure_white_mask = cv2.inRange(image, lower_white, upper_white)
-
-        # 转换为3通道图像（pponnxcr要求）
-        binary_3ch = cv2.merge([pure_white_mask, pure_white_mask, pure_white_mask])
-
-        return binary_3ch
+        # 不进行预处理，直接返回原始图像
+        return image
 
     def _product_button(
             self,
@@ -338,6 +334,7 @@ class ForgottenHallStageOcr(Ocr):
 
         boxes = self._find_number(image)
         image_list = [crop(image, area) for area in boxes]
+
         results = self.ocr_multi_lines(image_list)
 
         # 直接使用数字位置，不再需要偏移
@@ -485,12 +482,29 @@ class ForgottenHallStageOcr(Ocr):
 
 
 class DraggableStageList(DraggableList):
-    def insight_row(self, row: Keyword, main: ModuleBase, skip_first_screenshot=True) -> bool:
-        while 1:
+    def insight_row(self, row: Keyword, main: ModuleBase, skip_first_screenshot=True, max_retries: int = 10) -> bool:
+        """
+        导航使指定关卡行可见
+
+        Args:
+            row: 目标关卡关键词
+            main: 模块实例
+            skip_first_screenshot: 是否跳过首次截图
+            max_retries: 最大重试次数，防止无限循环
+
+        Returns:
+            bool: 关卡是否可见且可访问
+        """
+        retry_count = 0
+        slide_count = 0
+        max_slides = 5
+
+        while retry_count < max_retries:
             result = super().insight_row(row, main=main, skip_first_screenshot=skip_first_screenshot)
             if not result:
                 if row == KEYWORDS_FORGOTTEN_HALL_STAGE.Stage_1:
-                    # Must have stage 1, retry if not found
+                    retry_count += 1
+                    logger.warning(f'Stage_1 not found, retry {retry_count}/{max_retries}')
                     continue
                 else:
                     return False
@@ -501,15 +515,25 @@ class DraggableStageList(DraggableList):
                 main.device.screenshot()
             button = self.keyword2button(row)
 
-            # end
+            # end - 按钮完全可见
             if button.button[0] > 0:
                 break
 
-            # Stage number is insight but button is not
-            logger.info("Stage number is insight, swipe left a little bit to find the entrance")
+            # 关卡编号可见但按钮不可见，向左滑动
+            slide_count += 1
+            if slide_count > max_slides:
+                logger.warning(f'Max slides ({max_slides}) reached, stopping')
+                return False
+
+            logger.info(f"Stage visible, swipe left ({slide_count}/{max_slides})")
             self.drag_vector = (0.2, 0.4)
             self.drag_page("left", main=main)
             self.drag_vector = DraggableList.drag_vector
+
+        if retry_count >= max_retries:
+            logger.error(f'Failed to find {row} after {max_retries} retries')
+            return False
+
         return True
 
     def is_row_selected(self, button: OcrResultButton, main: ModuleBase) -> bool:
@@ -568,6 +592,31 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
                 self.interval_reset(check_button)
                 continue
 
+    def goto_stage_selection(self, dungeon: DungeonList):
+        """
+        只导航到深渊关卡选择界面，不选择任何关卡
+
+        用于自动选关模式：进入后游戏会自动定格在最高可挑战关卡
+
+        Args:
+            dungeon: 深渊类型（Memory_of_Chaos 或 The_Last_Vestiges_of_Towering_Citadel）
+
+        Returns:
+            bool: 是否成功导航到选关界面
+        """
+        if self.appear(FORGOTTEN_HALL_CHECK):
+            logger.info('Already in forgotten hall')
+        else:
+            self.ui_ensure(page_guide)
+            from tools.forgotten_hall_navigator import TreasuresLightwardNavigator
+            navigator = TreasuresLightwardNavigator()
+            if not navigator.goto_forgotten_hall_from_guide(self.device):
+                logger.error('Failed to navigate to Forgotten Hall')
+                return False
+
+        self.stage_choose(dungeon)
+        return True
+
     def stage_goto(self, dungeon: DungeonList, stage_keyword: ForgottenHallStage,
                    team1_preset: int = None, team2_preset: int = None):
         """
@@ -596,8 +645,8 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
         ]:
             logger.error(f'DungeonList Chosen is not a forgotten hall: {dungeon}')
             return False
-        if dungeon == KEYWORDS_DUNGEON_LIST.Memory_of_Chaos and stage_keyword.id > 10:
-            logger.error(f'This dungeon "{dungeon}" does not have stage that greater than 10. '
+        if dungeon == KEYWORDS_DUNGEON_LIST.Memory_of_Chaos and stage_keyword.id > 12:
+            logger.error(f'This dungeon "{dungeon}" does not have stage that greater than 12. '
                          f'{stage_keyword.id} is chosen')
             return False
 
@@ -1281,6 +1330,9 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
             out: FORGOTTEN_HALL_CHECK
         """
         from tasks.combat.assets.assets_combat_finish import COMBAT_AGAIN
+        from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import (
+            QUICK_COMPLETE_TITLE, QUICK_COMPLETE_CONFIRM
+        )
 
         logger.hr('Handle battle success', level=2)
         timeout = Timer(15).start()
@@ -1291,6 +1343,12 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
             if self.appear(FORGOTTEN_HALL_CHECK):
                 logger.info('Battle success handled, returned to forgotten hall')
                 return True
+
+            # 处理快速通关弹窗（3星通关时前置关卡奖励解锁提示）
+            if self.appear(QUICK_COMPLETE_TITLE, interval=2):
+                logger.info('Quick complete popup detected, clicking confirm')
+                self.device.click(QUICK_COMPLETE_CONFIRM)
+                continue
 
             if self.appear_then_click(COMBAT_AGAIN, interval=3):
                 continue
@@ -1443,9 +1501,7 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
                     return False
 
             # Execute combat with custom end detection
-            logger.info(f'[DEBUG] Passing expected_end={is_battle_end}, callable={callable(is_battle_end)}')
             self.combat_execute(expected_end=is_battle_end)
-            logger.info('[DEBUG] combat_execute() returned')
         else:
             logger.warning('Failed to auto-engage enemy')
 
@@ -1618,6 +1674,76 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
         logger.info(f'Scan complete: {stage_stars}')
         return stage_stars
 
+    def detect_current_highest_stage(self, max_stage: int = 12, target_stars: int = 3) -> tuple:
+        """
+        从当前可见区域检测最高可挑战关卡（不滑动）
+
+        游戏进入选关页面时自动定格在最高解锁关卡，直接识别即可
+
+        Args:
+            max_stage: 最大关卡数（混沌回忆=12, 忘却之庭=15）
+            target_stars: 目标星数（默认3）
+
+        Returns:
+            tuple[int, dict]: (起始关卡, {关卡号: 星数})
+            起始关卡为-1表示全部完成
+        """
+        logger.hr('Detect current highest stage', level=2)
+        stage_stars = {}
+
+        self.device.screenshot()
+        STAGE_LIST.load_rows(main=self)
+
+        highest_unlocked = 0
+        for button in STAGE_LIST.cur_buttons:
+            if not button.matched_keyword:
+                continue
+
+            stage_num = button.matched_keyword.id
+            if stage_num > max_stage:
+                continue
+
+            if getattr(button, 'is_locked', False):
+                stage_stars[stage_num] = -1
+                continue
+
+            star_count = button.star_count if button.star_count is not None else 0
+            stage_stars[stage_num] = star_count
+            logger.info(f'Stage {stage_num}: {star_count} stars')
+
+            if stage_num > highest_unlocked:
+                highest_unlocked = stage_num
+
+        logger.info(f'Visible stages: {stage_stars}, Highest: {highest_unlocked}')
+
+        # 判断起始关卡
+        if not stage_stars:
+            logger.warning('No stages detected in current view')
+            return (1, {})
+
+        if highest_unlocked == max_stage and stage_stars.get(max_stage, 0) >= target_stars:
+            logger.info(f'Stage {max_stage} already has {target_stars}+ stars, task complete')
+            return (-1, stage_stars)
+
+        # 找最高的未达标关卡
+        for stage_num in sorted(stage_stars.keys(), reverse=True):
+            stars = stage_stars[stage_num]
+            if stars >= 0 and stars < target_stars:
+                logger.info(f'Starting stage: {stage_num} ({stars} stars, target: {target_stars})')
+                return (stage_num, stage_stars)
+
+        # 所有可见关卡已完成，往右滑动找更高关卡
+        if highest_unlocked < max_stage:
+            logger.info(f'All visible stages completed, scrolling right to find higher stages...')
+            next_stage = highest_unlocked + 1
+            if next_stage <= max_stage:
+                next_stage_keyword = getattr(KEYWORDS_FORGOTTEN_HALL_STAGE, f'Stage_{next_stage}')
+                STAGE_LIST.insight_row(next_stage_keyword, main=self)
+                # 递归检测
+                return self.detect_current_highest_stage(max_stage, target_stars)
+
+        return (-1, stage_stars)
+
     def find_starting_stage(self, stage_stars: dict, target_stars: int = 3, max_stage: int = 12) -> int:
         """
         根据星数扫描结果确定起始挑战关卡
@@ -1688,3 +1814,76 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
 
         logger.warning(f'Stage {stage_num} not found in current view')
         return -1
+
+    def check_and_claim_rewards(self, skip_first_screenshot=True) -> bool:
+        """
+        检测并领取深渊奖励
+
+        在关卡选择界面检测右下角的奖励提示，存在则点击进入并领取
+
+        Returns:
+            bool: 是否成功领取了奖励
+
+        Pages:
+            in: FORGOTTEN_HALL_CHECK (关卡选择界面)
+            out: FORGOTTEN_HALL_CHECK (关卡选择界面)
+        """
+        from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import (
+            REWARD_INDICATOR, REWARD_CLAIM_BUTTON, REWARD_EXIT
+        )
+
+        logger.hr('Check rewards', level=2)
+
+        if not skip_first_screenshot:
+            self.device.screenshot()
+
+        # 检测奖励提示按钮
+        if not self.appear(REWARD_INDICATOR):
+            logger.info('No reward indicator found')
+            return False
+
+        logger.info('Reward indicator detected, claiming rewards...')
+
+        # 点击奖励提示进入奖励界面
+        self.device.click(REWARD_INDICATOR)
+        self.device.sleep(1.0)
+
+        # 等待奖励界面加载并领取
+        timeout = Timer(15).start()
+        claimed = False
+
+        while not timeout.reached():
+            self.device.screenshot()
+
+            # 检测领取按钮
+            if self.appear(REWARD_CLAIM_BUTTON, interval=1):
+                logger.info('Claiming reward...')
+                self.device.click(REWARD_CLAIM_BUTTON)
+                claimed = True
+                self.device.sleep(0.5)
+                continue
+
+            # 处理领取后的弹窗
+            if self.handle_reward(interval=2):
+                continue
+
+            if self.handle_popup_confirm():
+                continue
+
+            if self.handle_popup_single():
+                continue
+
+            # 如果回到了关卡选择界面，说明领取完成
+            if self.appear(FORGOTTEN_HALL_CHECK):
+                if claimed:
+                    logger.info('Rewards claimed successfully')
+                break
+
+            # 点击退出按钮返回深渊界面
+            if self.appear(REWARD_EXIT, interval=2):
+                logger.info('Clicking exit button to return to forgotten hall')
+                self.device.click(REWARD_EXIT)
+                self.device.sleep(0.5)
+                continue
+
+        return claimed

@@ -285,18 +285,22 @@ class ForgottenHallChallenge(ForgottenHallUI):
 
     def run_auto_selection(self):
         """
-        自动选关挑战主流程
+        自动选关挑战主流程（增强版：支持队伍调换和奖励领取）
 
         流程：
         1. 进入关卡选择界面
-        2. 扫描所有关卡星数
-        3. 确定起始关卡（最高未完成关卡）
-        4. 循环挑战：
-           - 成功(达目标星数) → 升级到下一关
-           - 失败/未达标 → 降级到上一关
-        5. 终止条件：
+        2. 检测并领取可用奖励
+        3. 扫描所有关卡星数
+        4. 确定起始关卡（最高未完成关卡）
+        5. 循环挑战：
+           - 成功(达目标星数) → 领取奖励 → 升级到下一关
+           - 失败/未达标：
+             - 向下探索阶段 → 降级
+             - 向上攀爬阶段 → 尝试队伍调换重试，调换后仍失败则停止任务
+        6. 终止条件：
            - 最高关卡达成目标星数
            - 降到最低关卡仍失败
+           - 向上攀爬时调换队伍后仍失败
 
         Returns:
             bool: 是否成功完成任务
@@ -323,57 +327,96 @@ class ForgottenHallChallenge(ForgottenHallUI):
             logger.info(f'Min stage: {min_stage}, Max stage: {max_stage}')
             logger.info(f'Team1 Preset: {team1_preset}, Team2 Preset: {team2_preset}')
 
-            # 2. 进入关卡选择界面
-            from tasks.base.assets.assets_base_page import FORGOTTEN_HALL_CHECK
-            if not self.appear(FORGOTTEN_HALL_CHECK):
-                self.stage_goto(dungeon, KEYWORDS_FORGOTTEN_HALL_STAGE.Stage_1,
-                                team1_preset=None, team2_preset=None)
+            # 2. 进入关卡选择界面（不选择特定关卡，保持游戏默认定位）
+            self.goto_stage_selection(dungeon)
 
-            # 确保在关卡选择界面
-            self.stage_choose(dungeon)
+            # 2.1 首次进入时检测并领取奖励
+            self.check_and_claim_rewards(skip_first_screenshot=False)
 
-            # 3. 扫描所有关卡
-            stage_stars = self.scan_all_stages(max_stage=max_stage)
+            # 3. 检测当前最高可挑战关卡（不需要滑动）
+            current_stage, stage_stars = self.detect_current_highest_stage(
+                max_stage=max_stage,
+                target_stars=target_stars
+            )
 
-            # 4. 确定起始关卡
-            current_stage = self.find_starting_stage(stage_stars, target_stars, max_stage)
+            # 4. 检查是否已完成所有关卡
             if current_stage == -1:
                 logger.hr('All Stages Completed!', level=1)
                 logger.info(f'All stages have reached {target_stars}+ stars')
                 return True
 
-            # 5. 主循环：挑战 -> 判断结果 -> 升级/降级
+            # 5. 状态变量：阶段和队伍调换
+            # phase: 'EXPLORING_DOWN' = 向下探索（新账号找能三星的关卡）
+            #        'CLIMBING_UP' = 向上攀爬（成功后继续挑战更高关卡）
+            phase = 'EXPLORING_DOWN'
+            team_swapped = False  # 当前关卡是否已调换队伍
+
+            logger.info(f'Initial phase: {phase}')
+
+            # 6. 主循环：挑战 -> 判断结果 -> 升级/降级/调换队伍
             while True:
-                logger.hr(f'Auto Challenge Stage {current_stage}', level=1)
+                # 决定使用的队伍配置
+                if team_swapped:
+                    actual_team1, actual_team2 = team2_preset, team1_preset
+                    logger.info(f'Using SWAPPED teams: team1={actual_team1}, team2={actual_team2}')
+                else:
+                    actual_team1, actual_team2 = team1_preset, team2_preset
+
+                logger.hr(f'Auto Challenge Stage {current_stage} (Phase: {phase})', level=1)
 
                 # 挑战当前关卡
                 success, actual_stars = self._challenge_stage(
                     dungeon=dungeon,
                     stage_num=current_stage,
-                    team1_preset=team1_preset,
-                    team2_preset=team2_preset,
+                    team1_preset=actual_team1,
+                    team2_preset=actual_team2,
                     target_stars=target_stars
                 )
 
                 if success:
-                    # 成功：检查是否完成任务
+                    # 成功：领取奖励
+                    self.check_and_claim_rewards(skip_first_screenshot=False)
+
+                    # 检查是否完成任务
                     if current_stage >= max_stage:
                         logger.hr('All Stages Completed!', level=1)
                         logger.info(f'Stage {max_stage} completed with {target_stars}+ stars')
                         return True
 
-                    # 升级到下一关
+                    # 阶段转换：第一次成功时进入攀爬阶段
+                    if phase == 'EXPLORING_DOWN':
+                        phase = 'CLIMBING_UP'
+                        logger.info(f'Phase transition: EXPLORING_DOWN -> CLIMBING_UP at stage {current_stage}')
+
+                    # 升级到下一关，重置调换状态
                     current_stage += 1
+                    team_swapped = False
                     logger.info(f'Stage passed! Moving to stage {current_stage}')
                 else:
-                    # 失败或未达目标星数：降级
-                    if current_stage <= min_stage:
-                        logger.hr('Challenge Failed at Minimum Stage', level=1)
-                        logger.error(f'Failed at stage {current_stage} (min_stage={min_stage})')
-                        return False
+                    # 失败或未达目标星数
+                    if phase == 'EXPLORING_DOWN':
+                        # 向下探索阶段：直接降级，不调换队伍
+                        if current_stage <= min_stage:
+                            logger.hr('Challenge Failed at Minimum Stage (Exploring)', level=1)
+                            logger.error(f'Failed at stage {current_stage} (min_stage={min_stage})')
+                            return False
 
-                    current_stage -= 1
-                    logger.info(f'Stage failed or below target, falling back to stage {current_stage}')
+                        current_stage -= 1
+                        team_swapped = False
+                        logger.info(f'Exploring down: falling back to stage {current_stage}')
+
+                    else:  # phase == 'CLIMBING_UP'
+                        # 向上攀爬阶段：尝试队伍调换
+                        if not team_swapped:
+                            # 首次失败：尝试调换队伍重新挑战同一关卡
+                            team_swapped = True
+                            logger.warning(f'Stage {current_stage} failed, trying team swap...')
+                            # 不改变 current_stage，下一轮会用调换后的队伍重新挑战
+                        else:
+                            # 已调换仍失败：停止任务
+                            logger.hr('Challenge Failed After Team Swap', level=1)
+                            logger.error(f'Stage {current_stage} failed even with swapped teams, stopping task')
+                            return False
 
         except Exception as e:
             logger.error(f'Auto selection challenge failed: {e}')

@@ -204,3 +204,59 @@ RETURN_TO_FORGOTTEN_HALL = ButtonWrapper(
         ),
     ],
 )
+# 快速通关弹窗标题检测
+# 当3星通关时，前置关卡的奖励会自动解锁，弹出此提示
+QUICK_COMPLETE_TITLE = ButtonWrapper(
+    name='QUICK_COMPLETE_TITLE',
+    share=Button(
+        file='./assets/share/forgotten_hall/ui/QUICK_COMPLETE_TITLE.png',
+        area=(572, 56, 706, 89),
+        search=(552, 36, 726, 109),
+        color=(125, 122, 135),
+        button=(572, 56, 706, 89),
+    ),
+)
+# 快速通关弹窗确认按钮
+QUICK_COMPLETE_CONFIRM = ButtonWrapper(
+    name='QUICK_COMPLETE_CONFIRM',
+    share=Button(
+        file='./assets/share/forgotten_hall/ui/QUICK_COMPLETE_CONFIRM.png',
+        area=(602, 648, 676, 672),
+        search=(582, 628, 696, 692),
+        color=(155, 153, 150),
+        button=(602, 648, 676, 672),
+    ),
+)
+# 关卡选择界面右下角的奖励提示按钮（红色圆点）
+REWARD_INDICATOR = ButtonWrapper(
+    name='REWARD_INDICATOR',
+    share=Button(
+        file='./assets/share/forgotten_hall/ui/REWARD_INDICATOR.png',
+        area=(1232, 606, 1241, 622),
+        search=(1212, 586, 1261, 642),
+        color=(217, 91, 90),
+        button=(1232, 606, 1241, 622),
+    ),
+)
+# 奖励领取按钮（金色）
+REWARD_CLAIM_BUTTON = ButtonWrapper(
+    name='REWARD_CLAIM_BUTTON',
+    share=Button(
+        file='./assets/share/forgotten_hall/ui/REWARD_CLAIM_BUTTON.png',
+        area=(1003, 223, 1041, 242),
+        search=(983, 203, 1061, 262),
+        color=(170, 135, 64),
+        button=(1003, 223, 1041, 242),
+    ),
+)
+# 奖励界面退出按钮（右上角X）
+REWARD_EXIT = ButtonWrapper(
+    name='REWARD_EXIT',
+    share=Button(
+        file='./assets/share/forgotten_hall/ui/REWARD_EXIT.png',
+        area=(1076, 116, 1109, 150),
+        search=(1056, 96, 1129, 170),
+        color=(74, 74, 74),
+        button=(1076, 116, 1109, 150),
+    ),
+)
