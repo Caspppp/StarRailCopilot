@@ -1,6 +1,8 @@
+import fcntl
 import threading
 import time
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import inflection
 from cached_property import cached_property
@@ -11,6 +13,9 @@ from module.config.deep import deep_get, deep_set
 from module.exception import *
 from module.logger import logger, save_error_log
 from module.notify import handle_notify
+
+# 全局执行锁文件路径 - 保证同一时刻只有一个账号执行任务
+EXECUTION_LOCK_FILE = Path(__file__).parent.parent / "config" / ".execution.lock"
 
 
 class AzurLaneAutoScript:
@@ -274,70 +279,126 @@ class AzurLaneAutoScript:
         logger.set_file_logger(self.config_name)
         logger.info(f'Start scheduler loop: {self.config_name}')
 
-        while 1:
-            # Check update event from GUI
-            if self.stop_event is not None:
-                if self.stop_event.is_set():
-                    logger.info("Update event detected")
-                    logger.info(f"[{self.config_name}] exited.")
-                    break
-            # Check game server maintenance
-            self.checker.wait_until_available()
-            if self.checker.is_recovered():
-                # There is an accidental bug hard to reproduce
-                # Sometimes, config won't be updated due to blocking
-                # even though it has been changed
-                # So update it once recovered
-                del_cached_property(self, 'config')
-                logger.info('Server or network is recovered. Restart game client')
-                self.config.task_call('Restart')
-            # Get task
-            task = self.get_next_task()
-            # Init device and change server
-            _ = self.device
-            self.device.config = self.config
-            # Skip first restart
-            if self.is_first_task and task == 'Restart':
-                logger.info('Skip task `Restart` at scheduler start')
-                self.config.task_delay(server_update=True)
-                del_cached_property(self, 'config')
-                continue
+        # 在循环外部管理锁状态，实现"连续执行所有 pending 任务"的策略
+        lock_file = None
+        has_lock = False
 
-            # Run
-            logger.info(f'Scheduler: Start task `{task}`')
-            self.device.stuck_record_clear()
-            self.device.click_record_clear()
-            logger.hr(task, level=0)
-            success = self.run(inflection.underscore(task))
-            logger.info(f'Scheduler: End task `{task}`')
-            self.is_first_task = False
+        def acquire_lock():
+            nonlocal lock_file, has_lock
+            if has_lock:
+                return
+            logger.info(f'Scheduler: Waiting for execution lock...')
+            EXECUTION_LOCK_FILE.parent.mkdir(parents=True, exist_ok=True)
+            lock_file = open(EXECUTION_LOCK_FILE, 'w')
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            has_lock = True
+            logger.info(f'Scheduler: Got execution lock')
 
-            # Check failures
-            failed = deep_get(self.failure_record, keys=task, default=0)
-            failed = 0 if success else failed + 1
-            deep_set(self.failure_record, keys=task, value=failed)
-            if failed >= 3:
-                logger.critical(f"Task `{task}` failed 3 or more times.")
-                logger.critical("Possible reason #1: You haven't used it correctly. "
-                                "Please read the help text of the options.")
-                logger.critical("Possible reason #2: There is a problem with this task. "
-                                "Please contact developers or try to fix it yourself.")
-                logger.critical('Request human takeover')
-                handle_notify(
-                    self.config.Error_OnePushConfig,
-                    title=f"Src <{self.config_name}> crashed",
-                    content=f"<{self.config_name}> RequestHumanTakeover\nTask `{task}` failed 3 or more times.",
-                )
-                exit(1)
-
-            if success:
-                del_cached_property(self, 'config')
-                continue
+        def release_lock(reason=""):
+            nonlocal lock_file, has_lock
+            if not has_lock:
+                return
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            lock_file.close()
+            lock_file = None
+            has_lock = False
+            if reason:
+                logger.info(f'Scheduler: Released execution lock ({reason})')
             else:
-                # self.config.task_delay(success=False)
-                del_cached_property(self, 'config')
-                self.checker.check_now()
-                continue
+                logger.info(f'Scheduler: Released execution lock')
+
+        try:
+            while 1:
+                # Check update event from GUI
+                if self.stop_event is not None:
+                    if self.stop_event.is_set():
+                        logger.info("Update event detected")
+                        logger.info(f"[{self.config_name}] exited.")
+                        break
+                # Check game server maintenance
+                self.checker.wait_until_available()
+                if self.checker.is_recovered():
+                    # There is an accidental bug hard to reproduce
+                    # Sometimes, config won't be updated due to blocking
+                    # even though it has been changed
+                    # So update it once recovered
+                    del_cached_property(self, 'config')
+                    logger.info('Server or network is recovered. Restart game client')
+                    self.config.task_call('Restart')
+
+                # 【重要】在调用阻塞的 get_next_task() 之前，先检查是否有 pending 任务
+                # 如果没有 pending 任务但持有锁，先释放锁让其他账号运行
+                self.config.get_next_task()
+                is_pending = len(self.config.pending_task) > 0
+
+                if not is_pending and has_lock:
+                    release_lock("no pending tasks, waiting for next task")
+
+                # Get task（可能阻塞等待下一个任务时间）
+                task = self.get_next_task()
+                # Init device and change server
+                _ = self.device
+                self.device.config = self.config
+                # Skip first restart
+                if self.is_first_task and task == 'Restart':
+                    logger.info('Skip task `Restart` at scheduler start')
+                    self.config.task_delay(server_update=True)
+                    del_cached_property(self, 'config')
+                    continue
+
+                # 重新检查是否有 pending 任务（因为 get_next_task 可能等待了一段时间）
+                self.config.get_next_task()
+                is_pending = len(self.config.pending_task) > 0
+
+                # 如果有 pending 任务，获取锁
+                if is_pending:
+                    acquire_lock()
+
+                # 执行任务
+                if has_lock:
+                    logger.info(f'Scheduler: Start task `{task}`')
+                    self.device.stuck_record_clear()
+                    self.device.click_record_clear()
+                    logger.hr(task, level=0)
+                    success = self.run(inflection.underscore(task))
+                    logger.info(f'Scheduler: End task `{task}`')
+                    self.is_first_task = False
+                else:
+                    # 没有锁意味着没有 pending 任务，get_next_task 会等待
+                    # 这里不需要执行任何操作，回到循环开头重新检查
+                    continue
+
+                # Check failures
+                failed = deep_get(self.failure_record, keys=task, default=0)
+                failed = 0 if success else failed + 1
+                deep_set(self.failure_record, keys=task, value=failed)
+                if failed >= 3:
+                    logger.critical(f"Task `{task}` failed 3 or more times.")
+                    logger.critical("Possible reason #1: You haven't used it correctly. "
+                                    "Please read the help text of the options.")
+                    logger.critical("Possible reason #2: There is a problem with this task. "
+                                    "Please contact developers or try to fix it yourself.")
+                    logger.critical('Request human takeover')
+                    handle_notify(
+                        self.config.Error_OnePushConfig,
+                        title=f"Src <{self.config_name}> crashed",
+                        content=f"<{self.config_name}> RequestHumanTakeover\nTask `{task}` failed 3 or more times.",
+                    )
+                    exit(1)
+
+                if success:
+                    del_cached_property(self, 'config')
+                    # 24 小时不间断运行：不检查是否退出，继续循环等待下一个任务
+                    # 锁的释放由循环开头的 is_pending 检查处理
+                    continue
+                else:
+                    # self.config.task_delay(success=False)
+                    del_cached_property(self, 'config')
+                    self.checker.check_now()
+                    continue
+        finally:
+            # 确保在退出时释放锁
+            release_lock("loop exit")
 
 
 if __name__ == '__main__':
