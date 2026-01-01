@@ -7,7 +7,7 @@ import time
 import cv2
 import numpy as np
 from typing import Optional, Tuple
-from module.logger.logger import logger
+from module.logger.logger import logger, logger_debug
 from module.base.button import ClickButton
 
 from .templates import ButtonTemplateManager
@@ -340,7 +340,7 @@ class TreasuresLightwardNavigator:
         # =========================================================================
         # Debug: 保存调试信息
         # =========================================================================
-        if config.SAVE_DEBUG_SCREENSHOTS:
+        if logger_debug and config.SAVE_DEBUG_SCREENSHOTS:
             from datetime import datetime
             from pathlib import Path
             import os

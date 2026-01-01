@@ -16,11 +16,12 @@ from module.ocr.utils import merge_buttons
 
 
 class OcrResultButton:
-    def __init__(self, boxed_result: BoxedResult, matched_keyword):
+    def __init__(self, boxed_result: BoxedResult, matched_keyword, star_count=None):
         """
         Args:
             boxed_result: BoxedResult from ppocr-onnx
             matched_keyword: Keyword object or None
+            star_count: Star rating for Forgotten Hall stages (None or 0-3)
         """
         self.area = boxed_result.box
         self.search = area_pad(self.area, pad=-20)
@@ -36,6 +37,9 @@ class OcrResultButton:
 
         self.text = boxed_result.ocr_text
         self.score = boxed_result.score
+
+        # 新增：星级信息（仅用于深渊关卡）
+        self.star_count = star_count
 
     def __str__(self):
         return self.name
@@ -54,6 +58,11 @@ class OcrResultButton:
     @property
     def is_keyword_matched(self) -> bool:
         return self.matched_keyword is not None
+
+    @property
+    def is_completed(self) -> bool:
+        """检查关卡是否3星完成（仅用于深渊关卡）"""
+        return self.star_count == 3 if self.star_count is not None else None
 
 
 class Ocr:

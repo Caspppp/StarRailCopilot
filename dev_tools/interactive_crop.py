@@ -523,10 +523,49 @@ class InteractiveCropper:
         save_path = template_dir / filename
 
         cv2.imwrite(str(save_path), template)
-        print(f"[INFO] 已保存模板: {save_path}")
-        print(f"[INFO] 坐标: area=({x1}, {y1}, {x2}, {y2})")
-        print(f"[INFO] 裁剪区域尺寸: {x2-x1+1}x{y2-y1+1}")
-        print(f"[INFO] 模板总尺寸: {w}x{h} (黑色背景)")
+
+        # 提取 RGB 颜色值（使用官方 load_image 确保格式正确）
+        try:
+            from module.base.utils import load_image, get_color
+
+            # 获取 RGB 格式图像
+            if self.image_path:
+                rgb_image = load_image(self.image_path)
+            else:
+                # 从设备截图，device.image 已经是 RGB 格式
+                rgb_image = np.array(self.device.image)
+
+            # 提取 RGB 颜色值
+            color_rgb = get_color(rgb_image, area=(x1, y1, x2, y2))
+            color_rgb = tuple(map(int, color_rgb))
+
+            print(f"[INFO] 已保存模板: {save_path}")
+            print(f"[INFO] 坐标: area=({x1}, {y1}, {x2}, {y2})")
+            print(f"[INFO] 搜索范围: search=({x1-20}, {y1-20}, {x2+20}, {y2+20})")
+            print(f"[INFO] 颜色 (RGB): color={color_rgb}")
+            print(f"[INFO] 裁剪区域尺寸: {x2-x1+1}x{y2-y1+1}")
+            print(f"[INFO] 模板总尺寸: {w}x{h} (黑色背景)")
+            print()
+            print("[INFO] === ButtonWrapper 定义模板 ===")
+            print(f"""
+BUTTON_NAME = ButtonWrapper(
+    name='BUTTON_NAME',
+    share=Button(
+        file='./tools/your_module/assets/{filename}',
+        area=({x1}, {y1}, {x2}, {y2}),
+        search=({x1-20}, {y1-20}, {x2+20}, {y2+20}),
+        color={color_rgb},  # RGB 格式
+        button=({x1}, {y1}, {x2}, {y2}),
+    ),
+)
+""")
+        except ImportError:
+            print(f"[INFO] 已保存模板: {save_path}")
+            print(f"[INFO] 坐标: area=({x1}, {y1}, {x2}, {y2})")
+            print(f"[INFO] 裁剪区域尺寸: {x2-x1+1}x{y2-y1+1}")
+            print(f"[INFO] 模板总尺寸: {w}x{h} (黑色背景)")
+            print(f"[WARN] 无法导入 load_image，请手动提取 RGB 颜色值")
+
         return save_path
 
     def copy_coords_to_clipboard(self):
@@ -547,6 +586,33 @@ class InteractiveCropper:
             print(f"[WARN] 复制失败: {e}")
             print(f"[INFO] 坐标: {coord_str}")
 
+    def extract_color_only(self):
+        """仅提取选中区域的 RGB 颜色值（不保存文件）"""
+        if not self.crop_area:
+            print("[WARN] 请先框选区域")
+            return
+
+        x1, y1, x2, y2 = self.crop_area
+
+        try:
+            from module.base.utils import load_image, get_color
+
+            # 获取 RGB 格式图像
+            if self.image_path:
+                rgb_image = load_image(self.image_path)
+            else:
+                rgb_image = np.array(self.device.image)
+
+            # 提取 RGB 颜色值
+            color_rgb = get_color(rgb_image, area=(x1, y1, x2, y2))
+            color_rgb = tuple(map(int, color_rgb))
+
+            print(f"[INFO] 区域: area=({x1}, {y1}, {x2}, {y2})")
+            print(f"[INFO] 颜色 (RGB): color={color_rgb}")
+
+        except ImportError:
+            print("[WARN] 无法导入 load_image，请检查项目路径")
+
     def show_help(self):
         """显示帮助"""
         help_text = """
@@ -561,6 +627,7 @@ class InteractiveCropper:
 ║  F5 / 5      - 刷新截图                           ║
 ║  S           - 保存裁剪图片                       ║
 ║  T           - 保存为黑色背景模板（SRC项目）      ║
+║  E           - 提取 RGB 颜色值（不保存）          ║
 ║  C           - 复制坐标到剪贴板                   ║
 ║  P           - 打印当前坐标                       ║
 ║  R           - 重置选择                           ║
@@ -598,6 +665,8 @@ class InteractiveCropper:
                 self.save_template_crop()
             elif key == ord('c'):
                 self.copy_coords_to_clipboard()
+            elif key == ord('e'):
+                self.extract_color_only()
             elif key == ord('p'):
                 if self.crop_area:
                     print(f"[INFO] 当前坐标: area={self.crop_area}")

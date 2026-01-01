@@ -24,20 +24,24 @@ from tasks.map.control.control import MapControl
 from tasks.map.control.joystick import JoystickContact, MapControlJoystick
 
 
-def detect_unlocked_text(image, search_area):
+def detect_unlocked_text(image, search_area, ocr_model=None, save_debug=False, debug_index=0):
     """
     检测指定区域是否有"未解锁"文字
 
-    "未解锁"文字是较暗的蓝紫色 (BGR: B=100-130, G=35-65, R=55-85)
-    与关卡图标的亮紫色 (B=146-171) 区分
+    使用OCR直接识别文字，比颜色检测更准确
 
     Args:
         image: 原始图像 (BGR格式)
         search_area: 搜索区域 (x1, y1, x2, y2)
+        ocr_model: OCR模型实例（可选，用于复用）
+        save_debug: 是否保存调试图像
+        debug_index: 调试序号
 
     Returns:
         bool: 是否检测到"未解锁"文字
     """
+    from module.ocr.models import TextSystem
+
     x1, y1, x2, y2 = search_area
 
     # 边界检查
@@ -53,54 +57,88 @@ def detect_unlocked_text(image, search_area):
     # 裁剪区域
     crop_img = image[y1:y2, x1:x2]
 
-    # 精确的"未解锁"文字颜色范围（排除关卡图标亮紫色）
-    # BGR: B=100-130, G=35-65, R=55-85
-    lower_unlock = np.array([100, 35, 55], dtype=np.uint8)
-    upper_unlock = np.array([130, 65, 85], dtype=np.uint8)
-    unlock_mask = cv2.inRange(crop_img, lower_unlock, upper_unlock)
+    # 区域太小，跳过OCR
+    if crop_img.shape[0] < 5 or crop_img.shape[1] < 5:
+        return False
 
-    # 计算像素数量
-    pixel_count = np.sum(unlock_mask > 0)
+    # 保存调试图像
+    if save_debug or logger_debug:
+        os.makedirs('./log/debug/unlock_detector', exist_ok=True)
+        timestamp = int(time.time() * 1000)
 
-    # "未解锁"文字需要至少50个像素（排除关卡图标边缘误检）
-    MIN_UNLOCK_PIXELS = 50
+        # 保存裁剪区域
+        crop_path = f'./log/debug/unlock_detector/{timestamp}_idx{debug_index}_crop.png'
+        save_image(crop_img, crop_path)
 
-    return pixel_count >= MIN_UNLOCK_PIXELS
+        # 保存标注了检测区域的完整图像
+        marked_img = image.copy()
+        cv2.rectangle(marked_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        cv2.putText(marked_img, f'#{debug_index}', (x1, y1-5),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+        full_path = f'./log/debug/unlock_detector/{timestamp}_idx{debug_index}_full.png'
+        save_image(marked_img, full_path)
+
+        logger.info(f'[UnlockDetector] Debug images saved: {timestamp}_idx{debug_index}_*.png')
+
+    # 使用OCR识别文字
+    if ocr_model is None:
+        ocr_model = TextSystem('zhs')  # 中文简体模型
+
+    try:
+        # ocr_single_line 返回 (text, score) 元组
+        text, score = ocr_model.ocr_single_line(crop_img)
+        logger.debug(f'[UnlockDetector] OCR result at idx{debug_index}: "{text}" (score={score:.2f})')
+
+        # 检查是否包含"未解锁"或"锁"
+        if text and ('未解锁' in text or '锁' in text or 'unlock' in text.lower()):
+            logger.info(f'[UnlockDetector] Detected locked stage at idx{debug_index}: "{text}"')
+            return True
+        elif not text:
+            logger.debug(f'[UnlockDetector] No text recognized at idx{debug_index}')
+    except Exception as e:
+        logger.warning(f'[UnlockDetector] OCR failed at idx{debug_index}: {e}')
+
+    return False
 
 
-def scan_for_unlocked_stages(image, detected_boxes):
+def scan_for_unlocked_stages(image, detected_boxes, save_debug=False):
     """
     检测已识别关卡中哪些是未解锁的
 
-    检查每个数字框下方的80x20区域是否有"未解锁"文字
+    检查每个数字框下方的区域是否有"未解锁"文字
 
     Args:
         image: 原始图像
         detected_boxes: 已检测到的数字区域 [(x1,y1,x2,y2), ...]
+        save_debug: 是否保存调试图像
 
     Returns:
         unlocked_indices: 未解锁关卡的索引列表
     """
+    from module.ocr.models import TextSystem
+
     if not detected_boxes:
         return []
 
+    # 创建OCR模型实例复用，提高性能
+    ocr_model = TextSystem('zhs')  # 中文简体模型
     unlocked_indices = []
 
     for idx, box in enumerate(detected_boxes):
         x1, y1, x2, y2 = box
         center_x = (x1 + x2) // 2
 
-        # 搜索区域：数字框下方80x20
+        # 搜索区域：数字框下方80x20区域
         search_area = (
-            center_x - 40,
-            y2,
-            center_x + 40,
-            y2 + 20
+            center_x - 40,  # 左边界
+            y2,              # 数字框底部
+            center_x + 40,   # 右边界
+            y2 + 20          # 向下延伸20px
         )
 
-        if detect_unlocked_text(image, search_area):
+        if detect_unlocked_text(image, search_area, ocr_model=ocr_model,
+                               save_debug=save_debug, debug_index=idx):
             unlocked_indices.append(idx)
-            logger.info(f"[ForgottenHallStageOcr] Stage at index {idx} is locked")
 
     if unlocked_indices:
         logger.info(f"[ForgottenHallStageOcr] Found {len(unlocked_indices)} locked stages: {unlocked_indices}")
@@ -359,24 +397,25 @@ class ForgottenHallStageOcr(Ocr):
 
         results = [r for r in temp_results if r.is_keyword_matched]
 
-        # 未解锁关卡检测 - 检测已识别关卡下方的"未解锁"文字
+        # 未解锁关卡检测 - 标记未解锁关卡但不过滤（保留用于导航）
+        # 先初始化所有关卡为已解锁
+        for result in results:
+            result.is_locked = False
+
         if results and boxes:
-            locked_indices = scan_for_unlocked_stages(image, boxes)
+            locked_indices = scan_for_unlocked_stages(image, boxes, save_debug=logger_debug)
             if locked_indices:
                 # 按X坐标排序boxes以匹配results顺序
                 sorted_box_indices = sorted(range(len(boxes)), key=lambda i: boxes[i][0])
 
-                # 找出锁定关卡对应的result索引
-                locked_result_indices = set()
+                # 标记锁定关卡（不过滤）
                 for box_idx in locked_indices:
                     if box_idx < len(sorted_box_indices):
                         result_idx = sorted_box_indices.index(box_idx) if box_idx in sorted_box_indices else None
                         if result_idx is not None and result_idx < len(results):
-                            locked_result_indices.add(result_idx)
-                            logger.info(f"[ForgottenHallStageOcr] Stage {results[result_idx].matched_keyword} is locked")
-
-                # 过滤掉锁定的关卡
-                results = [r for i, r in enumerate(results) if i not in locked_result_indices]
+                            # 动态添加 is_locked 属性
+                            results[result_idx].is_locked = True
+                            logger.info(f"[ForgottenHallStageOcr] Stage {results[result_idx].matched_keyword} is locked (marked, not filtered)")
 
         logger.attr(name=f'{self.name} matched', text=results)
         return results
@@ -1545,6 +1584,14 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
                 if button.matched_keyword:
                     stage_num = button.matched_keyword.id
                     if stage_num not in scanned_stages and stage_num <= max_stage:
+                        # 跳过未解锁的关卡
+                        if getattr(button, 'is_locked', False):
+                            logger.info(f'Stage {stage_num}: locked (skipped)')
+                            scanned_stages.add(stage_num)
+                            stage_stars[stage_num] = -1  # 标记为未解锁
+                            new_stages_found = True
+                            continue
+
                         star_count = button.star_count if button.star_count is not None else 0
                         stage_stars[stage_num] = star_count
                         scanned_stages.add(stage_num)
@@ -1596,9 +1643,16 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
         # 关卡解锁条件：前一关已通关（星数>0）或是第1关
         for stage in range(max_stage, 0, -1):
             stars = stage_stars.get(stage, 0)
+
+            # 跳过未解锁关卡（星数为-1）
+            if stars == -1:
+                logger.debug(f'Stage {stage} is locked, skipping')
+                continue
+
             if stars < target_stars:
-                # 检查是否解锁（前一关有星数或是第1关）
-                if stage == 1 or stage_stars.get(stage - 1, 0) > 0:
+                # 检查是否解锁（前一关有星数>=0 或是第1关）
+                prev_stars = stage_stars.get(stage - 1, 0)
+                if stage == 1 or (prev_stars >= 0 and prev_stars > 0):
                     logger.info(f'Starting stage: {stage} (current: {stars} stars, target: {target_stars})')
                     return stage
 

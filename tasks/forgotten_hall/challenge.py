@@ -27,22 +27,30 @@ class ForgottenHallChallenge(ForgottenHallUI):
     def run(self):
         """主执行方法"""
         try:
-            # 检查是否启用自动选关模式
+            # 读取配置
             auto_selection = getattr(self.config, 'ForgottenHallChallenge_AutoStageSelection', False)
-            if auto_selection:
-                logger.info('Auto stage selection enabled')
-                return self.run_auto_selection()
-            # 1. 解析配置参数
             dungeon_type = self.config.ForgottenHallChallenge_DungeonType
-            stage_num = int(self.config.ForgottenHallChallenge_Stage)
             team1_preset = int(self.config.ForgottenHallChallenge_Team1Preset)
             team2_preset = int(self.config.ForgottenHallChallenge_Team2Preset)
 
-            logger.hr('Forgotten Hall Challenge', level=1)
-            logger.info(f'Dungeon type: {dungeon_type}')
-            logger.info(f'Stage: {stage_num}')
+            # 记录配置状态
+            logger.hr('Forgotten Hall Challenge Configuration', level=1)
+            logger.info(f'Dungeon Type: {dungeon_type}')
+            logger.info(f'Auto Stage Selection: {auto_selection}')
             logger.info(f'Team1 Preset: {team1_preset}')
             logger.info(f'Team2 Preset: {team2_preset}')
+
+            # 根据模式选择流程
+            if auto_selection:
+                logger.hr('Auto Stage Selection Mode', level=1)
+                return self.run_auto_selection()
+
+            # 手动选关模式
+            logger.hr('Manual Stage Selection Mode', level=1)
+
+            # 1. 解析配置参数
+            stage_num = int(self.config.ForgottenHallChallenge_Stage)
+            logger.info(f'Target Stage: {stage_num}')
 
             # 2. 选择深渊类型
             if dungeon_type == 'Memory_of_Chaos':
