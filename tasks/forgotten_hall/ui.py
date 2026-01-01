@@ -292,6 +292,76 @@ class ForgottenHallStageOcr(Ocr):
         # 不进行预处理，直接返回原始图像
         return image
 
+    def filter_consecutive_stages(self, results):
+        """
+        过滤掉不连续的孤立关卡号
+
+        通过检测最长连续序列，自动过滤误识别的孤立数字。
+        例如：[9, 7, 10, 11, 12] → [9, 10, 11, 12]（移除孤立的7）
+
+        Args:
+            results: 已通过keyword匹配的OcrResultButton列表
+
+        Returns:
+            过滤后的结果列表（只保留最长连续序列）
+
+        Examples:
+            >>> # 场景1：单个孤立数字
+            >>> [9, 7, 10, 11, 12] → [9, 10, 11, 12]
+            >>>
+            >>> # 场景2：多个孤立数字
+            >>> [5, 8, 9, 10, 11] → [8, 9, 10, 11]
+            >>>
+            >>> # 场景3：无连续数字（全部保留）
+            >>> [1, 3, 5, 7] → [1, 3, 5, 7]
+            >>>
+            >>> # 场景4：正常连续（无过滤）
+            >>> [9, 10, 11, 12] → [9, 10, 11, 12]
+        """
+        if len(results) <= 1:
+            return results
+
+        # 提取关卡号（stage_id, result）元组列表
+        stage_ids = [(r.matched_keyword.id, r) for r in results]
+        stage_ids.sort(key=lambda x: x[0])  # 按关卡号排序
+
+        # 找出所有连续序列
+        sequences = []
+        current_seq = [stage_ids[0]]
+
+        for i in range(1, len(stage_ids)):
+            prev_id = stage_ids[i-1][0]
+            curr_id = stage_ids[i][0]
+
+            if curr_id == prev_id + 1:  # 连续
+                current_seq.append(stage_ids[i])
+            else:  # 不连续，开始新序列
+                sequences.append(current_seq)
+                current_seq = [stage_ids[i]]
+
+        sequences.append(current_seq)  # 添加最后一个序列
+
+        # 找到最长序列（如果有多个相同长度，选数字较大的）
+        longest_seq = max(sequences, key=lambda seq: (len(seq), seq[0][0]))
+
+        # 如果最长序列长度 <= 1，说明没有连续数字，全部保留
+        if len(longest_seq) <= 1:
+            logger.info('[Continuity Filter] No consecutive sequence found, keeping all results')
+            return results
+
+        # 提取保留的结果
+        kept_ids = {stage_id for stage_id, _ in longest_seq}
+        filtered_results = [r for r in results if r.matched_keyword.id in kept_ids]
+
+        # 日志记录被过滤的数字
+        removed_ids = [stage_id for stage_id, _ in stage_ids
+                       if stage_id not in kept_ids]
+        if removed_ids:
+            logger.warning(f'[Continuity Filter] Removed isolated stages: {removed_ids}')
+            logger.info(f'[Continuity Filter] Kept consecutive sequence: {sorted(kept_ids)}')
+
+        return filtered_results
+
     def _product_button(
             self,
             boxed_result: BoxedResult,
@@ -393,6 +463,9 @@ class ForgottenHallStageOcr(Ocr):
             temp_results.append(button)
 
         results = [r for r in temp_results if r.is_keyword_matched]
+
+        # 连续性过滤 - 移除孤立的误识别数字
+        results = self.filter_consecutive_stages(results)
 
         # 未解锁关卡检测 - 标记未解锁关卡但不过滤（保留用于导航）
         # 先初始化所有关卡为已解锁
@@ -1433,24 +1506,42 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
         logger.error('Unexpected exit from retry loop')
         return (False, max_retries)
 
-    def enter_forgotten_hall_dungeon(self, skip_first_screenshot=True):
+    def _click_enter_dungeon(self, skip_first_screenshot=True):
         """
-        called after team is set
+        Click enter button to enter forgotten hall dungeon (without combat execution)
+
+        This method only handles entering the dungeon itself, not the combat.
+        For full dungeon entry with combat, use enter_forgotten_hall_dungeon() instead.
+
+        Args:
+            skip_first_screenshot: Whether to skip first screenshot
 
         Pages:
             in: ENTRANCE_CHECKED, ENTER_FORGOTTEN_HALL_DUNGEON
-            out: page_main, in forgotten hall map
+            out: In dungeon (BUFF_Forgotten_Hall appears)
         """
+        from tasks.base.assets.assets_base_popup import BUFF_Forgotten_Hall
+        from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import (
+            DUNGEON_ENTER_CHECKED,
+            ENTER_FORGOTTEN_HALL_DUNGEON
+        )
+
+        logger.info('Entering forgotten hall dungeon')
         interval = Timer(3)
         timeout = Timer(3)
-        while 1:  # enter ui -> popup
+
+        while True:
             if skip_first_screenshot:
                 skip_first_screenshot = False
             else:
                 self.device.screenshot()
 
+            # Success: entered dungeon (BUFF appears)
             if self.appear(BUFF_Forgotten_Hall):
+                logger.info('Successfully entered dungeon')
                 break
+
+            # Check enter button status
             if self.match_template_color(DUNGEON_ENTER_CHECKED):
                 if timeout.reached():
                     logger.info('Wait dungeon BUFF_Forgotten_Hall timeout')
@@ -1458,52 +1549,75 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
             else:
                 timeout.reset()
 
+            # Click enter button when ready
             if interval.reached() and self.team_prepared():
                 self.device.click(ENTER_FORGOTTEN_HALL_DUNGEON)
                 interval.reset()
 
-        # Dungeon entered, start auto engage enemy
+    def enter_forgotten_hall_dungeon(self, skip_first_screenshot=True):
+        """
+        Enter forgotten hall dungeon and execute combat (standard SRC pattern)
+
+        This is a convenience method that combines entering the dungeon
+        and executing combat. For more control, use _click_enter_dungeon()
+        and combat_execute() separately.
+
+        Pages:
+            in: ENTRANCE_CHECKED, ENTER_FORGOTTEN_HALL_DUNGEON
+            out: page_main, in forgotten hall map
+        """
+        # Step 1: Enter dungeon
+        self._click_enter_dungeon(skip_first_screenshot=skip_first_screenshot)
+
+        # Step 2: Auto engage enemy
         logger.info('Dungeon entered, starting auto engage enemy')
         success = self.auto_engage_enemy(move_duration=8, timeout=15)
-        if success:
-            logger.info('Successfully engaged enemy, executing combat')
 
-            # Define battle end detection function
-            def is_battle_end():
-                """Check if battle has ended (success or failure)"""
-                try:
-                    from tasks.combat.assets.assets_combat_finish import COMBAT_AGAIN
-                    from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import BATTLE_FAILED
-
-                    # 定期清除 stuck record（遵循 SRC 官方模式，参考 tasks/login/login.py）
-                    # 解决 handle_combat_damage_change() 失效导致的 wait too long 问题
-                    if not hasattr(self, '_battle_end_stuck_timer'):
-                        from module.base.timer import Timer
-                        self._battle_end_stuck_timer = Timer(10).start()
-
-                    if self._battle_end_stuck_timer.reached():
-                        logger.info('[is_battle_end] Clear stuck record (10s interval)')
-                        self.device.stuck_record_clear()
-                        self._battle_end_stuck_timer.reset()
-
-                    # 使用 appear() + interval 检测战斗结束
-                    if self.appear(BATTLE_FAILED, interval=0.5):
-                        logger.info('[is_battle_end] BATTLE_FAILED detected')
-                        return True
-
-                    if self.appear(COMBAT_AGAIN, interval=0.5):
-                        logger.info('[is_battle_end] COMBAT_AGAIN detected')
-                        return True
-
-                    return False
-                except Exception as e:
-                    logger.error(f'[is_battle_end] Exception: {e}')
-                    return False
-
-            # Execute combat with custom end detection
-            self.combat_execute(expected_end=is_battle_end)
-        else:
+        if not success:
             logger.warning('Failed to auto-engage enemy')
+            return
+
+        # Step 3: Execute combat with standard battle end detection
+        logger.info('Successfully engaged enemy, executing combat')
+
+        from tasks.combat.assets.assets_combat_finish import COMBAT_AGAIN
+        from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import (
+            BATTLE_FAILED,
+            RETURN_TO_FORGOTTEN_HALL
+        )
+        from tasks.base.assets.assets_base_page import FORGOTTEN_HALL_CHECK
+
+        def is_battle_end():
+            """Check if battle has ended (success or failure)"""
+            # Clear stuck record periodically (SRC standard pattern)
+            if not hasattr(self, '_battle_end_stuck_timer'):
+                self._battle_end_stuck_timer = Timer(10).start()
+
+            if self._battle_end_stuck_timer.reached():
+                logger.info('[is_battle_end] Clear stuck record (10s interval)')
+                self.device.stuck_record_clear()
+                self._battle_end_stuck_timer.reset()
+
+            # Check all end conditions
+            if self.appear(BATTLE_FAILED, interval=0.5):
+                logger.info('[is_battle_end] BATTLE_FAILED detected')
+                return True
+
+            if self.appear(RETURN_TO_FORGOTTEN_HALL, interval=0.5):
+                logger.info('[is_battle_end] RETURN_TO_FORGOTTEN_HALL detected')
+                return True
+
+            if self.appear(COMBAT_AGAIN, interval=0.5):
+                logger.info('[is_battle_end] COMBAT_AGAIN detected')
+                return True
+
+            if self.appear(FORGOTTEN_HALL_CHECK, interval=0.5):
+                logger.info('[is_battle_end] FORGOTTEN_HALL_CHECK detected')
+                return True
+
+            return False
+
+        self.combat_execute(expected_end=is_battle_end)
 
     def auto_engage_enemy(self, move_duration=8, timeout=15, skip_first_screenshot=True):
         """

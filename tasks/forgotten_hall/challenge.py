@@ -26,6 +26,7 @@ class ForgottenHallChallenge(ForgottenHallUI):
 
     def run(self):
         """主执行方法"""
+        success = False
         try:
             # 读取配置
             auto_selection = getattr(self.config, 'ForgottenHallChallenge_AutoStageSelection', False)
@@ -43,7 +44,8 @@ class ForgottenHallChallenge(ForgottenHallUI):
             # 根据模式选择流程
             if auto_selection:
                 logger.hr('Auto Stage Selection Mode', level=1)
-                return self.run_auto_selection()
+                success = self.run_auto_selection()
+                return success
 
             # 手动选关模式
             logger.hr('Manual Stage Selection Mode', level=1)
@@ -96,42 +98,76 @@ class ForgottenHallChallenge(ForgottenHallUI):
                 logger.hr(f'Battle 1 Attempt {attempt}/{max_retries}', level=2)
                 attempts_battle1 = attempt
 
-                # 进入副本并战斗
+                # Step 1: Enter dungeon (standard SRC pattern)
                 logger.info(f'Battle 1 Attempt {attempt}: Entering dungeon')
-                self.enter_forgotten_hall_dungeon(skip_first_screenshot=(attempt == 1))
+                self._click_enter_dungeon(skip_first_screenshot=(attempt == 1))
 
-                # 检测 Battle 1 结果：只检测是否失败
-                logger.info(f'Battle 1 Attempt {attempt}: Checking for battle failure')
-                # 使用短超时检测 BATTLE_FAILED，未出现则认为成功
-                from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import BATTLE_FAILED
-                from module.base.timer import Timer
+                # Step 2: Auto engage enemy
+                logger.info(f'Battle 1 Attempt {attempt}: Auto-engaging enemy')
+                engage_success = self.auto_engage_enemy(move_duration=8, timeout=15)
 
-                # 开始检测前清除 stuck record（遵循 SRC 官方模式）
-                self.device.stuck_record_clear()
+                if not engage_success:
+                    logger.warning(f'Battle 1 Attempt {attempt}: Failed to engage enemy')
+                    # Exit and retry
+                    logger.info('Exiting dungeon to retry')
+                    self.exit_dungeon()
 
-                timeout = Timer(3).start()  # 3秒短超时
-                battle1_failed = False
-
-                while not timeout.reached():
-                    self.device.screenshot()
-                    # 使用 appear() + interval 替代 match_template_color()
-                    if self.appear(BATTLE_FAILED, interval=0.5):
-                        logger.info('Battle 1 failed - BATTLE_FAILED detected')
-                        battle1_failed = True
+                    if attempt >= max_retries:
+                        logger.error(f'Battle 1 failed to engage enemy after {max_retries} retries')
                         break
-                    self.device.sleep(0.5)
 
-                if not battle1_failed:
-                    # Battle 1 成功（未检测到失败屏幕，已进入 Battle 2 场景）
-                    logger.info(f'Battle 1 succeeded on attempt {attempt}/{max_retries}')
-                    logger.info('Staying in dungeon for Battle 2')
-                    battle1_success = True
-                    break
-                else:
-                    # Battle 1 失败
+                    logger.info(f'Waiting 2s before retry attempt {attempt+1}')
+                    self.device.sleep(2.0)
+                    continue
+
+                # Step 3: Execute combat with battle end detection
+                logger.info(f'Battle 1 Attempt {attempt}: Executing combat')
+
+                from module.base.timer import Timer
+                from tasks.combat.assets.assets_combat_finish import COMBAT_AGAIN
+                from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import (
+                    BATTLE_FAILED,
+                    RETURN_TO_FORGOTTEN_HALL
+                )
+                from tasks.base.assets.assets_base_page import FORGOTTEN_HALL_CHECK
+
+                def is_battle_end():
+                    """Check if battle has ended (success or failure)."""
+                    if not hasattr(self, '_battle1_end_stuck_timer'):
+                        self._battle1_end_stuck_timer = Timer(10).start()
+
+                    if self._battle1_end_stuck_timer.reached():
+                        logger.info('[Battle 1 is_battle_end] Clear stuck record (10s interval)')
+                        self.device.stuck_record_clear()
+                        self._battle1_end_stuck_timer.reset()
+
+                    if self.appear(BATTLE_FAILED, interval=0.5):
+                        logger.info('[Battle 1 is_battle_end] BATTLE_FAILED detected')
+                        return True
+
+                    if self.appear(RETURN_TO_FORGOTTEN_HALL, interval=0.5):
+                        logger.info('[Battle 1 is_battle_end] RETURN_TO_FORGOTTEN_HALL detected')
+                        return True
+
+                    if self.appear(COMBAT_AGAIN, interval=0.5):
+                        logger.info('[Battle 1 is_battle_end] COMBAT_AGAIN detected')
+                        return True
+
+                    if self.appear(FORGOTTEN_HALL_CHECK, interval=0.5):
+                        logger.info('[Battle 1 is_battle_end] FORGOTTEN_HALL_CHECK detected')
+                        return True
+
+                    return False
+
+                self.combat_execute(expected_end=is_battle_end)
+
+                # Step 4: Check battle result
+                self.device.screenshot()
+
+                if self.appear(BATTLE_FAILED):
                     logger.warning(f'Battle 1 failed on attempt {attempt}/{max_retries}')
 
-                    # 处理失败（返回关卡选择界面）
+                    # Handle failure (return to stage selection)
                     if not self.handle_battle_failure():
                         logger.error('Failed to return to stage selection')
                         return False
@@ -143,6 +179,12 @@ class ForgottenHallChallenge(ForgottenHallUI):
                     logger.info(f'Waiting 2s before retry attempt {attempt+1}')
                     self.device.sleep(2.0)
                     continue
+                else:
+                    # Battle 1 成功（未检测到失败屏幕，已进入 Battle 2 场景）
+                    logger.info(f'Battle 1 succeeded on attempt {attempt}/{max_retries}')
+                    logger.info('Staying in dungeon for Battle 2')
+                    battle1_success = True
+                    break
 
             # 5.3 检查上半结果
             if not battle1_success:
@@ -266,6 +308,7 @@ class ForgottenHallChallenge(ForgottenHallUI):
                 logger.hr('Challenge Complete - All Battles Successful', level=1)
                 logger.attr('Battle 1 Attempts', attempts_battle1)
                 logger.attr('Battle 2 Attempts', attempts_battle2)
+                success = True
                 return True
             else:
                 logger.hr('Battle 2 Failed', level=1)
@@ -282,6 +325,14 @@ class ForgottenHallChallenge(ForgottenHallUI):
             logger.error(f'Challenge failed: {e}')
             logger.exception(e)
             return False
+        finally:
+            # 任务结束时重置 next_run，避免调度器立即重复执行导致死循环
+            if success:
+                logger.info('Forgotten Hall challenge completed successfully')
+                self.config.task_delay(server_update=True)
+            else:
+                logger.info('Forgotten Hall challenge failed or incomplete, will retry later')
+                self.config.task_delay(minute=120)
 
     def run_auto_selection(self):
         """
@@ -317,9 +368,12 @@ class ForgottenHallChallenge(ForgottenHallUI):
             if dungeon_type == 'Memory_of_Chaos':
                 dungeon = KEYWORDS_DUNGEON_LIST.Memory_of_Chaos
                 max_stage = 12
-            else:
+            elif dungeon_type == 'The_Last_Vestiges_of_Towering_Citadel':
                 dungeon = KEYWORDS_DUNGEON_LIST.The_Last_Vestiges_of_Towering_Citadel
                 max_stage = 15
+            else:
+                logger.error(f'Unknown dungeon type: {dungeon_type}')
+                return False
 
             logger.hr('Auto Stage Selection Mode', level=1)
             logger.info(f'Dungeon: {dungeon_type}')
@@ -328,7 +382,9 @@ class ForgottenHallChallenge(ForgottenHallUI):
             logger.info(f'Team1 Preset: {team1_preset}, Team2 Preset: {team2_preset}')
 
             # 2. 进入关卡选择界面（不选择特定关卡，保持游戏默认定位）
-            self.goto_stage_selection(dungeon)
+            if not self.goto_stage_selection(dungeon):
+                logger.error('Failed to navigate to stage selection')
+                return False
 
             # 2.1 首次进入时检测并领取奖励
             self.check_and_claim_rewards(skip_first_screenshot=False)
@@ -401,9 +457,25 @@ class ForgottenHallChallenge(ForgottenHallUI):
                             logger.error(f'Failed at stage {current_stage} (min_stage={min_stage})')
                             return False
 
-                        current_stage -= 1
-                        team_swapped = False
-                        logger.info(f'Exploring down: falling back to stage {current_stage}')
+                        # 检查下一关卡是否已完成
+                        next_stage = current_stage - 1
+                        if next_stage in stage_stars and stage_stars[next_stage] >= target_stars:
+                            # 下一关已完成，不应降级，改为触发队伍调换
+                            logger.warning(f'Stage {current_stage} failed, but stage {next_stage} already has {target_stars}+ stars')
+                            if not team_swapped:
+                                team_swapped = True
+                                logger.warning(f'Cannot downgrade to completed stage {next_stage}, trying team swap instead')
+                                # 不改变 current_stage，下一轮用调换后的队伍重试当前关卡
+                            else:
+                                # 已调换仍失败：停止任务
+                                logger.hr('Challenge Failed After Team Swap', level=1)
+                                logger.error(f'Stage {current_stage} failed even with swapped teams, stopping task')
+                                return False
+                        else:
+                            # 正常降级逻辑（下一关未完成或不在字典中）
+                            current_stage -= 1
+                            team_swapped = False
+                            logger.info(f'Exploring down: falling back to stage {current_stage}')
 
                     else:  # phase == 'CLIMBING_UP'
                         # 向上攀爬阶段：尝试队伍调换
@@ -451,26 +523,48 @@ class ForgottenHallChallenge(ForgottenHallUI):
             logger.error(f'Failed to navigate to stage {stage_num}')
             return (False, 0)
 
-        # 执行 Battle 1 (上半)
+        # 执行 Battle 1 (上半) - Standard SRC pattern
         from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import BATTLE_FAILED
+        from tasks.combat.assets.assets_combat_finish import COMBAT_AGAIN
+        from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import RETURN_TO_FORGOTTEN_HALL
+        from tasks.base.assets.assets_base_page import FORGOTTEN_HALL_CHECK
 
         logger.hr('Battle 1: Upper Half', level=2)
-        self.enter_forgotten_hall_dungeon(skip_first_screenshot=True)
 
-        # 检测 Battle 1 结果
-        self.device.stuck_record_clear()
-        timeout = Timer(3).start()
-        battle1_failed = False
+        # Step 1: Enter dungeon
+        self._click_enter_dungeon(skip_first_screenshot=True)
 
-        while not timeout.reached():
-            self.device.screenshot()
+        # Step 2: Auto engage enemy
+        engage_success = self.auto_engage_enemy(move_duration=8, timeout=15)
+        if not engage_success:
+            logger.warning('Failed to engage enemy in Battle 1')
+            self.exit_dungeon()
+            return (False, 0)
+
+        # Step 3: Execute combat with battle end detection
+        def is_battle_end():
+            if not hasattr(self, '_battle1_end_stuck_timer'):
+                self._battle1_end_stuck_timer = Timer(10).start()
+
+            if self._battle1_end_stuck_timer.reached():
+                self.device.stuck_record_clear()
+                self._battle1_end_stuck_timer.reset()
+
             if self.appear(BATTLE_FAILED, interval=0.5):
-                logger.info('Battle 1 failed - BATTLE_FAILED detected')
-                battle1_failed = True
-                break
-            self.device.sleep(0.5)
+                return True
+            if self.appear(RETURN_TO_FORGOTTEN_HALL, interval=0.5):
+                return True
+            if self.appear(COMBAT_AGAIN, interval=0.5):
+                return True
+            if self.appear(FORGOTTEN_HALL_CHECK, interval=0.5):
+                return True
+            return False
 
-        if battle1_failed:
+        self.combat_execute(expected_end=is_battle_end)
+
+        # Step 4: Check result
+        self.device.screenshot()
+        if self.appear(BATTLE_FAILED):
             logger.warning('Battle 1 failed')
             self.handle_battle_failure()
             return (False, 0)
