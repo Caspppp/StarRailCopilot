@@ -222,6 +222,19 @@ class GeneratedConfig:
     # Group `RogueDebug`
     RogueDebug_DebugMode = False
 
+    # Group `CurrencyWarWorld`
+    CurrencyWarWorld_Difficulty = 'Difficulty_5'  # Difficulty_1, Difficulty_2, Difficulty_3, Difficulty_4, Difficulty_5
+    CurrencyWarWorld_UseImmersifier = True
+    CurrencyWarWorld_WeeklyFarming = False
+    CurrencyWarWorld_CurrencyWarWeeklyPoints = {}
+
+    # Group `CurrencyWarStrategy`
+    CurrencyWarStrategy_PieceStrategy = 'auto_synergy'  # auto_synergy, random
+    CurrencyWarStrategy_MaxRounds = 30
+
+    # Group `CurrencyWarDebug`
+    CurrencyWarDebug_DebugMode = False
+
     # Group `Ornament`
     Ornament_Dungeon = 'Divergent_Universe_Eternal_Comedy'  # Divergent_Universe_Within_the_West_Wind, Divergent_Universe_Moonlit_Blood, Divergent_Universe_Unceasing_Strife, Divergent_Universe_Famished_Worker, Divergent_Universe_Eternal_Comedy, Divergent_Universe_To_Sweet_Dreams, Divergent_Universe_Pouring_Blades, Divergent_Universe_Fruit_of_Evil, Divergent_Universe_Permafrost, Divergent_Universe_Gentle_Words, Divergent_Universe_Smelted_Heart, Divergent_Universe_Untoppled_Walls
     Ornament_Team = 1  # 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
@@ -235,3 +248,12 @@ class GeneratedConfig:
 
     # Group `PlannerScan`
     PlannerScan_ResultAdd = False
+
+    # Group `ForgottenHallChallenge`
+    ForgottenHallChallenge_DungeonType = 'Memory_of_Chaos'  # Memory_of_Chaos, The_Last_Vestiges_of_Towering_Citadel
+    ForgottenHallChallenge_Stage = 10  # 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+    ForgottenHallChallenge_Team1Preset = 1  # 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
+    ForgottenHallChallenge_Team2Preset = 1  # 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
+    ForgottenHallChallenge_AutoStageSelection = True  # True, False
+    ForgottenHallChallenge_TargetStars = 3  # 1, 2, 3
+    ForgottenHallChallenge_MinStage = 1  # 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12

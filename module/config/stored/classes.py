@@ -232,6 +232,11 @@ class StoredSimulatedUniverseElite(StoredCounter, StoredExpiredAtMonday0400):
     # value --- Times left to farm. Resets to 100 every Monday 04:00, and decreases each time the elite boss is cleared.
 
 
+class StoredCurrencyWarPoints(StoredCounter, StoredExpiredAtMonday0400):
+    """货币战争周常点数，周一4点重置"""
+    pass
+
+
 class StoredAssignment(StoredCounter):
     pass
 

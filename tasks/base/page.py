@@ -1,6 +1,7 @@
 import traceback
 
 from tasks.base.assets.assets_base_page import *
+from tasks.dungeon.assets.assets_dungeon_nav import CURRENCY_WAR_CHECK
 
 
 class Page:
@@ -158,6 +159,10 @@ page_forgotten_hall.link(CLOSE, destination=page_main)
 # Rogue, Simulated Universe
 page_rogue = Page(ROGUE_CHECK)
 page_rogue.link(CLOSE, destination=page_main)
+
+# Currency War
+page_currency_war = Page(CURRENCY_WAR_CHECK)
+page_currency_war.link(CLOSE, destination=page_main)
 
 # Planner result
 page_planner = Page(PLANNER_CHECK)

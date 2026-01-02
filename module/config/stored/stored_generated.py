@@ -12,6 +12,7 @@ from module.config.stored.classes import (
     StoredBattlePassSimulatedUniverse,
     StoredBattlePassWeeklyQuest,
     StoredCounter,
+    StoredCurrencyWarPoints,
     StoredDaily,
     StoredDailyActivity,
     StoredDungeonDouble,
@@ -128,3 +129,4 @@ class StoredGenerated:
     CloudRemainPaid = StoredInt("DataUpdate.CloudStorage.CloudRemainPaid")
     CloudRemainFree = StoredInt("DataUpdate.CloudStorage.CloudRemainFree")
     SimulatedUniverseFarm = StoredSimulatedUniverseElite("Rogue.RogueWorld.SimulatedUniverseFarm")
+    CurrencyWarWeeklyPoints = StoredCurrencyWarPoints("CurrencyWar.CurrencyWarWorld.CurrencyWarWeeklyPoints")

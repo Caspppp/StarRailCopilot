@@ -403,6 +403,27 @@ RogueBlessing:
 RogueDebug:
   DebugMode: false
 
+# ==================== Currency War ====================
+
+CurrencyWarWorld:
+  Difficulty:
+    value: Difficulty_5
+    option: [ Difficulty_1, Difficulty_2, Difficulty_3, Difficulty_4, Difficulty_5 ]
+  UseImmersifier: true
+  WeeklyFarming: false
+  CurrencyWarWeeklyPoints:
+    stored: StoredCurrencyWarPoints
+    display: disabled
+
+CurrencyWarStrategy:
+  PieceStrategy:
+    value: auto_synergy
+    option: [ auto_synergy, random ]
+  MaxRounds: 30
+
+CurrencyWarDebug:
+  DebugMode: false
+
 Ornament:
   Dungeon:
     value: Divergent_Universe_Eternal_Comedy

@@ -1098,5 +1098,18 @@
     },
     "order": 0,
     "color": "#777777"
+  },
+  "CurrencyWarWeeklyPoints": {
+    "name": "CurrencyWarWeeklyPoints",
+    "path": "CurrencyWar.CurrencyWarWorld.CurrencyWarWeeklyPoints",
+    "i18n": "CurrencyWarWorld.CurrencyWarWeeklyPoints.name",
+    "stored": "StoredCurrencyWarPoints",
+    "attrs": {
+      "time": "2020-01-01 00:00:00",
+      "total": 0,
+      "value": 0
+    },
+    "order": 0,
+    "color": "#777777"
   }
 }

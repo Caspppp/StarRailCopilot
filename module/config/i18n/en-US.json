@@ -54,6 +54,10 @@
       "name": "Freebies",
       "help": ""
     },
+    "RelicEnhance": {
+      "name": "Task.RelicEnhance.name",
+      "help": "Task.RelicEnhance.help"
+    },
     "Weekly": {
       "name": "Echo of War",
       "help": ""
@@ -61,6 +65,14 @@
     "Rogue": {
       "name": "Simulated Universe",
       "help": ""
+    },
+    "CurrencyWar": {
+      "name": "Currency War",
+      "help": "Run Currency War weekly task, resets every Monday 4:00"
+    },
+    "ForgottenHallChallenge": {
+      "name": "Abyss Challenge",
+      "help": "Manually trigger abyss challenge, supports Memory of Chaos and Forgotten Hall"
     },
     "Daemon": {
       "name": "Dialogue Clicker",
@@ -1593,6 +1605,59 @@
       "help": "No stop conditions, no error handling, stop when encountering an error. Please report errors according to the doc: https://github.com/LmeSzinc/StarRailCopilot/wiki/RogueMap_cn"
     }
   },
+  "CurrencyWarWorld": {
+    "_info": {
+      "name": "Currency War Settings",
+      "help": "Currency War gameplay settings"
+    },
+    "Difficulty": {
+      "name": "Difficulty",
+      "help": "Select Currency War difficulty level",
+      "Difficulty_1": "Difficulty 1",
+      "Difficulty_2": "Difficulty 2",
+      "Difficulty_3": "Difficulty 3",
+      "Difficulty_4": "Difficulty 4",
+      "Difficulty_5": "Difficulty 5"
+    },
+    "UseImmersifier": {
+      "name": "Use Immersifier",
+      "help": "Use immersifier after completion to claim extra rewards"
+    },
+    "WeeklyFarming": {
+      "name": "Weekly Farming",
+      "help": "Farm Currency War weekly for points"
+    },
+    "CurrencyWarWeeklyPoints": {
+      "name": "Weekly Points",
+      "help": "Currency War weekly accumulated points"
+    }
+  },
+  "CurrencyWarStrategy": {
+    "_info": {
+      "name": "Strategy Settings",
+      "help": "Currency War game strategy"
+    },
+    "PieceStrategy": {
+      "name": "Piece Strategy",
+      "help": "Select piece placement strategy",
+      "auto_synergy": "Auto Synergy",
+      "random": "Random"
+    },
+    "MaxRounds": {
+      "name": "Max Rounds",
+      "help": "Maximum rounds per game"
+    }
+  },
+  "CurrencyWarDebug": {
+    "_info": {
+      "name": "Dev Settings",
+      "help": ""
+    },
+    "DebugMode": {
+      "name": "Dev Mode",
+      "help": "Debug mode, stops on error"
+    }
+  },
   "Ornament": {
     "_info": {
       "name": "Ornament Extraction Settings",
@@ -1672,6 +1737,98 @@
     "ResultAdd": {
       "name": "Accumulate multiple scan results",
       "help": "Turn on when planning multiple characters, will raise multiple characters all together\nTurn off when planning one character, planning goal will be refreshed at every scan"
+    }
+  },
+  "ForgottenHallChallenge": {
+    "_info": {
+      "name": "ForgottenHallChallenge._info.name",
+      "help": "ForgottenHallChallenge._info.help"
+    },
+    "DungeonType": {
+      "name": "ForgottenHallChallenge.DungeonType.name",
+      "help": "ForgottenHallChallenge.DungeonType.help",
+      "Memory_of_Chaos": "Memory_of_Chaos",
+      "The_Last_Vestiges_of_Towering_Citadel": "The_Last_Vestiges_of_Towering_Citadel"
+    },
+    "Stage": {
+      "name": "ForgottenHallChallenge.Stage.name",
+      "help": "ForgottenHallChallenge.Stage.help",
+      "1": "1",
+      "2": "2",
+      "3": "3",
+      "4": "4",
+      "5": "5",
+      "6": "6",
+      "7": "7",
+      "8": "8",
+      "9": "9",
+      "10": "10",
+      "11": "11",
+      "12": "12",
+      "13": "13",
+      "14": "14",
+      "15": "15"
+    },
+    "Team1Preset": {
+      "name": "ForgottenHallChallenge.Team1Preset.name",
+      "help": "ForgottenHallChallenge.Team1Preset.help",
+      "1": "1",
+      "2": "2",
+      "3": "3",
+      "4": "4",
+      "5": "5",
+      "6": "6",
+      "7": "7",
+      "8": "8",
+      "9": "9",
+      "10": "10",
+      "11": "11",
+      "12": "12"
+    },
+    "Team2Preset": {
+      "name": "ForgottenHallChallenge.Team2Preset.name",
+      "help": "ForgottenHallChallenge.Team2Preset.help",
+      "1": "1",
+      "2": "2",
+      "3": "3",
+      "4": "4",
+      "5": "5",
+      "6": "6",
+      "7": "7",
+      "8": "8",
+      "9": "9",
+      "10": "10",
+      "11": "11",
+      "12": "12"
+    },
+    "AutoStageSelection": {
+      "name": "ForgottenHallChallenge.AutoStageSelection.name",
+      "help": "ForgottenHallChallenge.AutoStageSelection.help",
+      "True": "True",
+      "False": "False"
+    },
+    "TargetStars": {
+      "name": "ForgottenHallChallenge.TargetStars.name",
+      "help": "ForgottenHallChallenge.TargetStars.help",
+      "1": "1",
+      "2": "2",
+      "3": "3"
+    },
+    "MinStage": {
+      "name": "ForgottenHallChallenge.MinStage.name",
+      "help": "ForgottenHallChallenge.MinStage.help",
+      "1": "1",
+      "2": "2",
+      "3": "3",
+      "4": "4",
+      "5": "5",
+      "6": "6",
+      "7": "7",
+      "8": "8",
+      "9": "9",
+      "10": "10",
+      "11": "11",
+      "12": "12"
     }
   },
   "Gui": {

@@ -69,6 +69,11 @@ Weekly:
       - RogueWorld
       - RogueBlessing
       - RogueDebug
+    CurrencyWar:
+      - Scheduler
+      - CurrencyWarWorld
+      - CurrencyWarStrategy
+      - CurrencyWarDebug
     ForgottenHallChallenge:
       - Scheduler
       - ForgottenHallChallenge

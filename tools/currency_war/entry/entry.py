@@ -1,0 +1,550 @@
+"""
+货币战争进入/退出逻辑
+参考 tasks/rogue/entry/entry.py
+"""
+from module.logger import logger
+from tasks.currency_war.ui.nav import CurrencyWarNav
+from tasks.currency_war.assets.assets_currency_war_ui import CURRENCY_WAR_MAIN_CHECK
+from tools.currency_war.exception import CurrencyWarReachedWeeklyPointLimit
+
+
+class CurrencyWarEntry(CurrencyWarNav):
+    """
+    处理货币战争界面的进入和退出
+    继承CurrencyWarNav以获得导航能力
+    """
+
+    def check_stop_condition(self):
+        """
+        检查是否应该停止任务
+
+        Raises:
+            CurrencyWarReachedWeeklyPointLimit: 达到周常点数上限
+
+        停止条件检查逻辑：
+        1. DebugMode=True → 总是运行
+        2. 周常点数过期 → 重置点数，继续运行
+        3. 周常点数已满：
+           a. WeeklyFarming=True → 继续刷材料
+           b. UseImmersifier=True 且有沉浸器 → 继续使用沉浸器
+           c. 否则 → 抛出异常，停止任务
+        """
+        logger.info(f'CurrencyWarWorld_UseImmersifier={self.config.CurrencyWarWorld_UseImmersifier}')
+        logger.info(f'CurrencyWarWorld_WeeklyFarming={self.config.CurrencyWarWorld_WeeklyFarming}')
+
+        # 调试模式总是运行
+        if self.config.CurrencyWarDebug_DebugMode:
+            logger.info('Debug mode enabled, skip stop condition check')
+            return
+
+        # 检查周常点数是否过期（周一4点重置）
+        stored = self.config.stored.CurrencyWarWeeklyPoints
+        if stored.is_expired():
+            logger.info('Weekly points expired, resetting to 0/18000')
+            stored.set(0, total=18000)
+
+        # 检查是否达到上限
+        if stored.is_full():
+            logger.info(f'Weekly points full: {stored.value}/{stored.total}')
+
+            if self.config.CurrencyWarWorld_WeeklyFarming:
+                logger.info('WeeklyFarming enabled, continue to farm materials')
+                return
+
+            if self.config.CurrencyWarWorld_UseImmersifier:
+                immersifier = self.config.stored.Immersifier
+                if immersifier.value > 0:
+                    logger.info(f'Has {immersifier.value} immersifiers, continue')
+                    return
+
+            raise CurrencyWarReachedWeeklyPointLimit
+
+        logger.info(f'Weekly points: {stored.value}/{stored.total}')
+
+    def currency_war_enter(self):
+        """
+        进入货币战争界面
+
+        Pages:
+            in: page_main
+            out: page_currency_war (main interface, difficulty select)
+
+        流程:
+            1. 检查停止条件
+            2. 导航到货币战争入口（进入标签页）
+            3. 点击传送按钮进入主界面
+            4. 等待主界面稳定
+            5. TODO: 后续实现难度选择和开始对局
+        """
+        logger.hr('Currency War Enter', level=1)
+
+        # 1. 检查停止条件
+        self.check_stop_condition()
+
+        # 2. 导航到货币战争入口（进入标签页）
+        self.currency_war_goto()
+
+        # 3. 点击传送按钮进入主界面
+        self._currency_war_teleport()
+
+        # 4. 等待主界面稳定
+        self.wait_until_stable(CURRENCY_WAR_MAIN_CHECK)
+        logger.info('Entered currency war main interface')
+
+        # 5. 主界面奖励领取 & 周常点数同步（可能触发停止条件）
+        self.currency_war_reward_claim()
+
+        # 6. 点击开始按钮进入货币战争
+        if self.currency_war_start():
+            # 7. 选择“超频博弈模式”并进入
+            if self.currency_war_overclock_enter():
+                # 8. 开始对局 → 过信息页 → 投资环境3选1 → 确认进入
+                self.currency_war_overclock_prepare()
+
+        # 8. TODO: 后续实现难度选择和开始对局
+        # difficulty = self.config.CurrencyWarWorld_Difficulty
+        # logger.info(f'Select difficulty: {difficulty}')
+        # self._select_difficulty(difficulty)
+
+    def currency_war_start(self, skip_first_screenshot=True) -> bool:
+        """
+        在货币战争主界面点击“开始”按钮
+
+        Pages:
+            in: page_currency_war (main interface)
+
+        Returns:
+            bool: 是否成功点击并离开主界面（若无法判断离开则返回 False）
+        """
+        from module.base.timer import Timer
+        from tasks.currency_war.assets.assets_currency_war_ui import (
+            CURRENCY_WAR_START,
+            CURRENCY_WAR_MAIN_CHECK,
+            CURRENCY_WAR_OVERCLOCK_MODE,
+            CURRENCY_WAR_OVERCLOCK_ENTER,
+        )
+
+        logger.hr('Currency War Start', level=2)
+        self.interval_clear(CURRENCY_WAR_START)
+
+        timeout = Timer(8).start()
+        clicked = False
+
+        while not timeout.reached():
+            if skip_first_screenshot:
+                skip_first_screenshot = False
+            else:
+                self.device.screenshot()
+
+            # 已进入模式选择界面
+            if self.appear(CURRENCY_WAR_OVERCLOCK_MODE) or self.appear(CURRENCY_WAR_OVERCLOCK_ENTER):
+                logger.info('Arrived at currency war mode selection')
+                return True
+
+            # 已离开主界面
+            if not self.appear(CURRENCY_WAR_MAIN_CHECK):
+                logger.info('Left currency war main page')
+                return True
+
+            # 弹窗处理
+            if self.handle_popup_confirm():
+                continue
+            if self.handle_popup_single():
+                continue
+
+            # 点击开始按钮
+            if self.appear_then_click(CURRENCY_WAR_START, interval=1):
+                clicked = True
+                self.device.sleep(1.0)
+                continue
+
+        if clicked:
+            logger.warning('Clicked start but still on currency war main page')
+        else:
+            logger.warning('Start button not found on currency war main page')
+
+        return False
+
+    def currency_war_overclock_enter(self, skip_first_screenshot=True) -> bool:
+        """
+        在博弈模式选择界面选择“超频博弈模式”并点击进入
+
+        Returns:
+            bool: 是否成功点击进入（若无法判断进入结果则返回 False）
+        """
+        from module.base.timer import Timer
+        from tasks.currency_war.assets.assets_currency_war_ui import (
+            CURRENCY_WAR_OVERCLOCK_MODE,
+            CURRENCY_WAR_OVERCLOCK_ENTER,
+        )
+
+        logger.hr('Currency War Overclock', level=2)
+        self.interval_clear(CURRENCY_WAR_OVERCLOCK_MODE)
+        self.interval_clear(CURRENCY_WAR_OVERCLOCK_ENTER)
+
+        timeout = Timer(10).start()
+        clicked_mode = False
+
+        while not timeout.reached():
+            if skip_first_screenshot:
+                skip_first_screenshot = False
+            else:
+                self.device.screenshot()
+
+            # 弹窗处理
+            if self.handle_popup_confirm():
+                continue
+            if self.handle_popup_single():
+                continue
+
+            # 先选模式，再点进入
+            if self.appear_then_click(CURRENCY_WAR_OVERCLOCK_MODE, interval=1):
+                clicked_mode = True
+                self.device.sleep(0.8)
+                continue
+
+            if self.appear_then_click(CURRENCY_WAR_OVERCLOCK_ENTER, interval=1):
+                self.device.sleep(2.0)
+                return True
+
+        if clicked_mode:
+            logger.warning('Overclock mode selected but enter button not found')
+        else:
+            logger.warning('Overclock mode selection not found')
+
+        return False
+
+    def currency_war_overclock_prepare(self, skip_first_screenshot=True) -> bool:
+        """
+        超频博弈：开始对局并完成开局前置流程
+
+        流程:
+            1. 点击“开始对局”
+            2. 等待BOSS信息加载，点击“下一步”
+            3. 位面信息页点击“下一步”
+            4. 点击空白处继续
+            5. 投资环境3选1：优先选择带“未解锁/未收录”标识的选项
+            6. 点击确认，进入游戏界面
+
+        Returns:
+            bool: 是否完成进入游戏前置流程（无法判断进入结果时返回 False）
+        """
+        from module.base.timer import Timer
+        from module.base.button import ClickButton
+        from tasks.currency_war.assets.assets_currency_war_ui import (
+            CURRENCY_WAR_OVERCLOCK_START_BATTLE,
+            CURRENCY_WAR_OVERCLOCK_NEXT,
+            CURRENCY_WAR_INVEST_CONFIRM,
+            CURRENCY_WAR_INVEST_UNDISCOVERED_OPTION_1,
+            CURRENCY_WAR_INVEST_UNDISCOVERED_OPTION_2,
+            CURRENCY_WAR_INVEST_UNDISCOVERED_OPTION_3,
+        )
+
+        logger.hr('Currency War Overclock Prepare', level=2)
+        self.interval_clear([
+            CURRENCY_WAR_OVERCLOCK_START_BATTLE,
+            CURRENCY_WAR_OVERCLOCK_NEXT,
+            CURRENCY_WAR_INVEST_CONFIRM,
+        ])
+
+        def click_blank_to_continue():
+            blank = ClickButton(area=(620, 340, 660, 380), name='CURRENCY_WAR_BLANK_CONTINUE')
+            self.device.click(blank)
+            self.device.sleep(1.0)
+
+        # 1. 点击开始对局（若已进入信息页则跳过）
+        timeout = Timer(10).start()
+        while not timeout.reached():
+            if skip_first_screenshot:
+                skip_first_screenshot = False
+            else:
+                self.device.screenshot()
+
+            if self.handle_popup_confirm():
+                continue
+            if self.handle_popup_single():
+                continue
+
+            if self.appear(CURRENCY_WAR_OVERCLOCK_NEXT):
+                break
+
+            if self.appear_then_click(CURRENCY_WAR_OVERCLOCK_START_BATTLE, interval=1):
+                self.device.sleep(1.5)
+                break
+
+        # 2. BOSS信息加载 → 下一步
+        timeout = Timer(30).start()
+        while not timeout.reached():
+            self.device.screenshot()
+
+            if self.handle_popup_confirm():
+                continue
+            if self.handle_popup_single():
+                continue
+
+            # 已进入投资环境选择页，跳过后续信息页
+            if self.appear(CURRENCY_WAR_INVEST_CONFIRM):
+                break
+
+            if self.appear_then_click(CURRENCY_WAR_OVERCLOCK_NEXT, interval=1):
+                self.device.sleep(1.2)
+                break
+        else:
+            logger.warning('Overclock next button (boss info) not found')
+
+        # 3. 位面信息 → 下一步
+        timeout = Timer(20).start()
+        while not timeout.reached():
+            self.device.screenshot()
+
+            if self.handle_popup_confirm():
+                continue
+            if self.handle_popup_single():
+                continue
+
+            if self.appear(CURRENCY_WAR_INVEST_CONFIRM):
+                break
+
+            if self.appear_then_click(CURRENCY_WAR_OVERCLOCK_NEXT, interval=1):
+                self.device.sleep(1.2)
+                break
+        else:
+            logger.warning('Overclock next button (plane info) not found')
+
+        # 4. 点击空白处继续（部分页面无按钮提示）
+        self.device.screenshot()
+        if not self.appear(CURRENCY_WAR_INVEST_CONFIRM):
+            click_blank_to_continue()
+
+        # 5. 投资环境选择（优先未解锁/未收录）
+        timeout = Timer(10).start()
+        while not timeout.reached():
+            self.device.screenshot()
+
+            if self.handle_popup_confirm():
+                continue
+            if self.handle_popup_single():
+                continue
+
+            if self.appear(CURRENCY_WAR_INVEST_CONFIRM):
+                break
+
+            # 某些情况下仍停留在信息页
+            if self.appear_then_click(CURRENCY_WAR_OVERCLOCK_NEXT, interval=1):
+                self.device.sleep(1.0)
+                continue
+
+            click_blank_to_continue()
+
+        options = [
+            (ClickButton(area=(177, 242, 333, 265), name='CURRENCY_WAR_INVEST_OPTION_1'),
+             CURRENCY_WAR_INVEST_UNDISCOVERED_OPTION_1),
+            (ClickButton(area=(573, 242, 707, 267), name='CURRENCY_WAR_INVEST_OPTION_2'),
+             CURRENCY_WAR_INVEST_UNDISCOVERED_OPTION_2),
+            (ClickButton(area=(958, 241, 1092, 266), name='CURRENCY_WAR_INVEST_OPTION_3'),
+             CURRENCY_WAR_INVEST_UNDISCOVERED_OPTION_3),
+        ]
+
+        chosen = False
+        scan = Timer(2).start()
+        while not scan.reached() and not chosen:
+            self.device.screenshot()
+            for click_btn, undiscovered_btn in options:
+                if self.match_template_luma(undiscovered_btn, similarity=0.75):
+                    logger.info(f'Choosing undiscovered investment option: {click_btn}')
+                    self.device.click(click_btn)
+                    self.device.sleep(0.8)
+                    chosen = True
+                    break
+
+        if not chosen:
+            logger.info('No undiscovered investment option found, choosing option 1')
+            self.device.click(options[0][0])
+            self.device.sleep(0.8)
+
+        # 6. 确认进入
+        timeout = Timer(15).start()
+        while not timeout.reached():
+            self.device.screenshot()
+
+            if self.handle_popup_confirm():
+                continue
+            if self.handle_popup_single():
+                continue
+
+            if self.appear_then_click(CURRENCY_WAR_INVEST_CONFIRM, interval=1):
+                self.device.sleep(2.0)
+                return True
+
+        logger.warning('Investment confirm button not found')
+        return False
+
+    def currency_war_leave(self):
+        """
+        退出货币战争界面
+
+        Pages:
+            in: Any currency war page
+            out: page_main
+        """
+        logger.hr('Currency War Leave', level=1)
+        # TODO: 实现退出逻辑
+        # self.ui_goto(page_main)
+        logger.info('TODO: Leave currency war and return to main')
+
+    def currency_war_reward_claim(self):
+        """
+        领取货币战争奖励并更新周常点数
+
+        流程:
+            1. OCR当前点数
+            2. 检测奖励指示器（红点）
+            3. 点击进入奖励界面
+            4. 循环领取所有奖励（15秒超时）
+            5. 处理弹窗
+            6. OCR更新后的点数
+            7. 更新存储的周常点数
+            8. 检查18000上限
+
+        Pages:
+            in: CURRENCY_WAR_MAIN_CHECK
+            out: CURRENCY_WAR_MAIN_CHECK
+
+        Returns:
+            bool: 是否成功领取奖励
+
+        Raises:
+            CurrencyWarReachedWeeklyPointLimit: 达到18000点上限且WeeklyFarming=False
+        """
+        from module.base.timer import Timer
+        from tasks.currency_war.assets.assets_currency_war_ui import (
+            OCR_CURRENCY_WAR_POINTS,
+            CLAIM_ALL_BUTTON,
+            CURRENCY_WAR_MAIN_CHECK,
+            CURRENCY_WAR_REWARD_CLOSE,
+        )
+        from tasks.base.assets.assets_base_page import CLOSE
+
+        logger.hr('Currency War Reward', level=2)
+
+        # 1. OCR当前点数（奖励前）
+        self.device.screenshot()
+        points_before = self.ocr_currency_war_points()
+        logger.info(f'Points before claiming: {points_before}/18000')
+        self._update_weekly_points_with_ocr(points_before)
+
+        # 2. 检测奖励指示器
+        if not self.has_reward_indicator():
+            logger.info('No reward indicator found, skip reward claiming')
+            self.check_stop_condition()
+            return False
+
+        logger.info('Reward indicator detected, claiming rewards...')
+
+        # 3. 点击奖励区域进入奖励界面
+        self.device.click(OCR_CURRENCY_WAR_POINTS)
+        self.device.sleep(1.0)
+
+        # 4. 循环领取奖励（带超时保护）
+        timeout = Timer(15).start()
+        claimed = False
+
+        while not timeout.reached():
+            self.device.screenshot()
+
+            # 点击领取按钮
+            if self.appear(CLAIM_ALL_BUTTON, interval=1):
+                logger.info('Claiming rewards...')
+                self.device.click(CLAIM_ALL_BUTTON)
+                claimed = True
+                self.device.sleep(0.5)
+                continue
+
+            # 处理领取后的弹窗
+            if self.handle_reward(interval=2):
+                continue
+
+            if self.handle_popup_confirm():
+                continue
+
+            if self.handle_popup_single():
+                continue
+
+            # 检查是否回到主界面（奖励领取完成）
+            if self.appear(CURRENCY_WAR_MAIN_CHECK):
+                if claimed:
+                    logger.info('Rewards claimed successfully')
+                break
+
+            # 货币战争奖励界面关闭按钮（返回主界面）
+            if self.appear_then_click(CURRENCY_WAR_REWARD_CLOSE, interval=2):
+                logger.info('Clicking currency war reward close button to return')
+                self.device.sleep(0.5)
+                continue
+
+            # 点击关闭按钮
+            if self.appear(CLOSE, interval=2):
+                logger.info('Clicking close button to return')
+                self.device.click(CLOSE)
+                self.device.sleep(0.5)
+                continue
+
+        # 5. 超时检查
+        if timeout.reached() and not claimed:
+            logger.warning('Reward claiming timeout')
+            self.check_stop_condition()
+            return False
+
+        # 6. 等待回到主界面
+        self.wait_until_stable(CURRENCY_WAR_MAIN_CHECK, timeout=Timer(3))
+
+        # 7. OCR更新后的点数
+        self.device.screenshot()
+        points_after = self.ocr_currency_war_points()
+        earned_points = points_after - points_before
+
+        logger.info(f'Points after claiming: {points_after}/18000 (+{earned_points})')
+
+        # 8. 更新周常点数（使用OCR直接值，避免累积误差）
+        self._update_weekly_points_with_ocr(points_after)
+
+        # 9. 重新检查停止条件（周常点数/沉浸器/周刷开关）
+        self.check_stop_condition()
+
+        return claimed
+
+    def _update_weekly_points(self, earned_points):
+        """
+        更新周常点数（增量方式，保留备用）
+
+        Args:
+            earned_points: 本次获得的点数
+        """
+        stored = self.config.stored.CurrencyWarWeeklyPoints
+        current = stored.value
+        total = stored.total
+
+        new_value = min(current + earned_points, total)
+        stored.value = new_value
+
+        logger.info(f'Weekly points: {new_value}/{total} (+{earned_points})')
+
+    def _update_weekly_points_with_ocr(self, ocr_points):
+        """
+        使用OCR识别的点数直接更新周常点数
+
+        Args:
+            ocr_points: OCR识别到的当前点数
+
+        Notes:
+            相比增量更新（current + earned），直接使用OCR结果更准确
+            因为OCR是从游戏界面读取的真实数据
+        """
+        stored = self.config.stored.CurrencyWarWeeklyPoints
+        old_value = stored.value
+
+        stored.value = min(ocr_points, 18000)  # 上限18000
+        stored.total = 18000
+
+        diff = stored.value - old_value
+        logger.info(f'Weekly points updated: {stored.value}/18000 (+{diff})')

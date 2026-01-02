@@ -261,6 +261,14 @@
       "UsedCode": {}
     }
   },
+  "RelicEnhance": {
+    "Scheduler": {
+      "Enable": false,
+      "NextRun": "2020-01-01 00:00:00",
+      "Command": "RelicEnhance",
+      "ServerUpdate": "04:00"
+    }
+  },
   "Weekly": {
     "Scheduler": {
       "Enable": false,
@@ -307,6 +315,44 @@
     },
     "RogueDebug": {
       "DebugMode": false
+    }
+  },
+  "CurrencyWar": {
+    "Scheduler": {
+      "Enable": false,
+      "NextRun": "2020-01-01 00:00:00",
+      "Command": "CurrencyWar",
+      "ServerUpdate": "04:00"
+    },
+    "CurrencyWarWorld": {
+      "Difficulty": "Difficulty_5",
+      "UseImmersifier": true,
+      "WeeklyFarming": false,
+      "CurrencyWarWeeklyPoints": {}
+    },
+    "CurrencyWarStrategy": {
+      "PieceStrategy": "auto_synergy",
+      "MaxRounds": 30
+    },
+    "CurrencyWarDebug": {
+      "DebugMode": false
+    }
+  },
+  "ForgottenHallChallenge": {
+    "Scheduler": {
+      "Enable": false,
+      "NextRun": "2020-01-01 00:00:00",
+      "Command": "ForgottenHallChallenge",
+      "ServerUpdate": "04:00"
+    },
+    "ForgottenHallChallenge": {
+      "DungeonType": "Memory_of_Chaos",
+      "Stage": 10,
+      "Team1Preset": 1,
+      "Team2Preset": 1,
+      "AutoStageSelection": true,
+      "TargetStars": 3,
+      "MinStage": 1
     }
   },
   "Daemon": {

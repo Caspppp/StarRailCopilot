@@ -66,6 +66,14 @@
       "name": "模拟宇宙",
       "help": ""
     },
+    "CurrencyWar": {
+      "name": "货币战争",
+      "help": "运行货币战争周常任务，周一4点重置"
+    },
+    "ForgottenHallChallenge": {
+      "name": "深渊挑战",
+      "help": "手动触发深渊挑战功能，支持混沌回忆和忘却之庭"
+    },
     "Daemon": {
       "name": "剧情连点器",
       "help": ""
@@ -73,10 +81,6 @@
     "PlannerScan": {
       "name": "角色养成规划",
       "help": ""
-    },
-    "ForgottenHallChallenge": {
-      "name": "深渊挑战",
-      "help": "手动触发深渊挑战功能，支持混沌回忆和忘却之庭"
     }
   },
   "Scheduler": {
@@ -1601,6 +1605,59 @@
       "help": "无停止条件，无异常处理，遇错误即停止，请按文档上报异常：https://github.com/LmeSzinc/StarRailCopilot/wiki/RogueMap_cn"
     }
   },
+  "CurrencyWarWorld": {
+    "_info": {
+      "name": "货币战争设置",
+      "help": "货币战争玩法设置"
+    },
+    "Difficulty": {
+      "name": "难度选择",
+      "help": "选择货币战争的难度等级",
+      "Difficulty_1": "难度1",
+      "Difficulty_2": "难度2",
+      "Difficulty_3": "难度3",
+      "Difficulty_4": "难度4",
+      "Difficulty_5": "难度5"
+    },
+    "UseImmersifier": {
+      "name": "使用沉浸器",
+      "help": "完成后使用沉浸器领取额外奖励"
+    },
+    "WeeklyFarming": {
+      "name": "每周刷分",
+      "help": "每周持续刷货币战争获取积分"
+    },
+    "CurrencyWarWeeklyPoints": {
+      "name": "周常积分",
+      "help": "本周货币战争累计积分"
+    }
+  },
+  "CurrencyWarStrategy": {
+    "_info": {
+      "name": "策略设置",
+      "help": "货币战争游戏策略"
+    },
+    "PieceStrategy": {
+      "name": "棋子策略",
+      "help": "选择棋子放置策略",
+      "auto_synergy": "自动协同",
+      "random": "随机放置"
+    },
+    "MaxRounds": {
+      "name": "最大回合数",
+      "help": "单局游戏最大回合数限制"
+    }
+  },
+  "CurrencyWarDebug": {
+    "_info": {
+      "name": "开发设置",
+      "help": ""
+    },
+    "DebugMode": {
+      "name": "开发模式",
+      "help": "调试模式，遇错误即停止"
+    }
+  },
   "Ornament": {
     "_info": {
       "name": "饰品提取设置",
@@ -1774,60 +1831,6 @@
       "12": "第12层"
     }
   },
-  "RelicEnhance": {
-    "_info": {
-      "name": "遗器强化设置",
-      "help": "自动强化符合条件的遗器，根据词条策略决定是否继续强化"
-    },
-    "PlanMode": {
-      "name": "使用方案模式",
-      "help": "启用后按方案列表顺序执行，关闭则使用下方的基础配置"
-    },
-    "FilterName": {
-      "name": "套装筛选",
-      "help": "输入要强化的遗器套装名称，留空则处理所有遗器"
-    },
-    "CheckSlots": {
-      "name": "强化部位",
-      "help": "勾选要处理的遗器部位（多选）"
-    },
-    "DesiredStats": {
-      "name": "有效副词条",
-      "help": "勾选期望的副词条，遗器需要包含这些词条才会被保留"
-    },
-    "MainStatBody": {
-      "name": "躯干主词条约束",
-      "help": "限制躯干遗器的主词条，留空则接受任意主词条"
-    },
-    "MainStatFeet": {
-      "name": "脚部主词条约束",
-      "help": "限制脚部遗器的主词条，留空则接受任意主词条"
-    },
-    "MinHits0": {
-      "name": "+0级阈值",
-      "help": "初始阈值，期望词条数量至少达到此值才开始强化"
-    },
-    "MinHits3": {
-      "name": "+3级阈值",
-      "help": "+3级检查，期望词条数量至少达到此值才继续强化"
-    },
-    "MinHits6": {
-      "name": "+6级阈值",
-      "help": "+6级检查，期望词条数量至少达到此值才继续强化"
-    },
-    "MinHits9": {
-      "name": "+9级阈值",
-      "help": "+9级检查，期望词条数量至少达到此值才继续强化"
-    },
-    "DiscardTrash": {
-      "name": "弃置不达标遗器",
-      "help": "强化完成后，不达标的遗器自动标记弃置"
-    },
-    "StopIfFail": {
-      "name": "未达标时停止",
-      "help": "在某级未通过阈值检查时立即停止强化此遗器"
-    }
-  },
   "Gui": {
     "Aside": {
       "Install": "安装",
@@ -1854,29 +1857,6 @@
       "ConfigSaved": "设置已保存",
       "AlasIsRunning": "调度器已在运行中",
       "ClickToUpdate": "有更新可用，点击这里进行更新"
-    },
-    "RelicPlan": {
-      "Title": "遗器强化方案",
-      "NewPlan": "新建方案",
-      "EditPlan": "编辑方案",
-      "PlanName": "方案名称",
-      "SavePlan": "保存",
-      "Cancel": "取消",
-      "Enable": "启用",
-      "Disable": "禁用",
-      "Edit": "编辑",
-      "Delete": "删除",
-      "Duplicate": "复制",
-      "MoveUp": "上移",
-      "MoveDown": "下移",
-      "NoPlan": "暂无方案，点击上方按钮新建",
-      "PlanCount": "共 {total} 个方案，{enabled} 个启用",
-      "RunEnabled": "执行启用的方案",
-      "BasicConfig": "基础配置",
-      "Slots": "强化部位",
-      "Substats": "有效副词条",
-      "Thresholds": "阈值设置",
-      "Options": "选项"
     },
     "Status": {
       "Running": "运行中",

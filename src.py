@@ -76,6 +76,10 @@ class StarRailCopilot(AzurLaneAutoScript):
         from tasks.ornament.ornament import Ornament
         Ornament(config=self.config, device=self.device).run()
 
+    def currency_war(self):
+        from tasks.currency_war.currency_war_bridge import CurrencyWarBridge
+        CurrencyWarBridge(config=self.config, device=self.device).run()
+
     def benchmark(self):
         from module.daemon.benchmark import run_benchmark
         run_benchmark(config=self.config)

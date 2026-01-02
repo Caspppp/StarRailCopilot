@@ -2331,33 +2331,75 @@
       }
     }
   },
-  "Daemon": {
-    "Daemon": {
+  "CurrencyWar": {
+    "Scheduler": {
       "Enable": {
-        "type": "state",
-        "value": true,
+        "type": "checkbox",
+        "value": false,
         "option": [
-          true
-        ],
-        "option_bold": [
-          true
+          true,
+          false
         ]
       },
-      "AimClicker": {
-        "type": "select",
-        "value": "do_not_click",
-        "option": [
-          "item_enemy",
-          "item",
-          "enemy",
-          "do_not_click"
-        ]
+      "NextRun": {
+        "type": "datetime",
+        "value": "2020-01-01 00:00:00",
+        "validate": "datetime"
+      },
+      "Command": {
+        "type": "input",
+        "value": "CurrencyWar",
+        "display": "hide"
+      },
+      "ServerUpdate": {
+        "type": "input",
+        "value": "04:00",
+        "display": "hide"
       }
-    }
-  },
-  "PlannerScan": {
-    "PlannerScan": {
-      "ResultAdd": {
+    },
+    "CurrencyWarWorld": {
+      "Difficulty": {
+        "type": "select",
+        "value": "Difficulty_5",
+        "option": [
+          "Difficulty_1",
+          "Difficulty_2",
+          "Difficulty_3",
+          "Difficulty_4",
+          "Difficulty_5"
+        ]
+      },
+      "UseImmersifier": {
+        "type": "checkbox",
+        "value": true
+      },
+      "WeeklyFarming": {
+        "type": "checkbox",
+        "value": false
+      },
+      "CurrencyWarWeeklyPoints": {
+        "type": "stored",
+        "value": {},
+        "display": "disabled",
+        "stored": "StoredCurrencyWarPoints"
+      }
+    },
+    "CurrencyWarStrategy": {
+      "PieceStrategy": {
+        "type": "select",
+        "value": "auto_synergy",
+        "option": [
+          "auto_synergy",
+          "random"
+        ]
+      },
+      "MaxRounds": {
+        "type": "input",
+        "value": 30
+      }
+    },
+    "CurrencyWarDebug": {
+      "DebugMode": {
         "type": "checkbox",
         "value": false
       }
@@ -2489,6 +2531,38 @@
           11,
           12
         ]
+      }
+    }
+  },
+  "Daemon": {
+    "Daemon": {
+      "Enable": {
+        "type": "state",
+        "value": true,
+        "option": [
+          true
+        ],
+        "option_bold": [
+          true
+        ]
+      },
+      "AimClicker": {
+        "type": "select",
+        "value": "do_not_click",
+        "option": [
+          "item_enemy",
+          "item",
+          "enemy",
+          "do_not_click"
+        ]
+      }
+    }
+  },
+  "PlannerScan": {
+    "PlannerScan": {
+      "ResultAdd": {
+        "type": "checkbox",
+        "value": false
       }
     }
   }
