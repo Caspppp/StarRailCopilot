@@ -331,8 +331,10 @@ class ForgottenHallChallenge(ForgottenHallUI):
                 logger.info('Forgotten Hall challenge completed successfully')
                 self.config.task_delay(server_update=True)
             else:
-                logger.info('Forgotten Hall challenge failed or incomplete, will retry later')
-                self.config.task_delay(minute=120)
+                logger.info('Forgotten Hall challenge failed or incomplete, will retry after 1 week')
+                # 深渊是周期性挑战，失败后延迟1周（10080分钟）再重试
+                # 因为队伍强度短期内不会改变，短时间重试无意义
+                self.config.task_delay(minute=10080)
 
     def run_auto_selection(self):
         """
