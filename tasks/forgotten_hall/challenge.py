@@ -28,6 +28,10 @@ class ForgottenHallChallenge(ForgottenHallUI):
         """主执行方法"""
         success = False
         try:
+            # 确保游戏已启动并在主界面
+            # 如果游戏未运行，会抛出 GameNotRunningError，调度器会自动调用 Restart 任务
+            self.ui_goto_main()
+
             # 读取配置
             auto_selection = getattr(self.config, 'ForgottenHallChallenge_AutoStageSelection', False)
             dungeon_type = self.config.ForgottenHallChallenge_DungeonType
