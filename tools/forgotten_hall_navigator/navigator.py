@@ -62,6 +62,52 @@ class TreasuresLightwardNavigator:
         logger.info("Successfully navigated to Forgotten Hall interior")
         return True
 
+    def goto_pure_fiction_from_guide(self, device) -> bool:
+        """
+        从 Guide 页面导航到虚构叙事内部
+
+        导航路径：Guide → 逐光捡金 Tab → 虚构叙事 Nav → 传送进入
+        """
+        logger.hr("Navigate to Pure Fiction via Treasures Lightward", level=2)
+
+        if not self.ensure_treasures_lightward_tab(device):
+            logger.error("Failed to switch to Treasures Lightward tab")
+            return False
+
+        if not self.select_pure_fiction_nav(device):
+            logger.error("Failed to select Pure Fiction nav")
+            return False
+
+        if not self.click_teleport_to_enter(device):
+            logger.error("Failed to click teleport button")
+            return False
+
+        logger.info("Successfully navigated to Pure Fiction interior")
+        return True
+
+    def goto_apocalyptic_shadow_from_guide(self, device) -> bool:
+        """
+        从 Guide 页面导航到末日幻影内部
+
+        导航路径：Guide → 逐光捡金 Tab → 末日幻影 Nav → 传送进入
+        """
+        logger.hr("Navigate to Apocalyptic Shadow via Treasures Lightward", level=2)
+
+        if not self.ensure_treasures_lightward_tab(device):
+            logger.error("Failed to switch to Treasures Lightward tab")
+            return False
+
+        if not self.select_apocalyptic_shadow_nav(device):
+            logger.error("Failed to select Apocalyptic Shadow nav")
+            return False
+
+        if not self.click_teleport_to_enter(device):
+            logger.error("Failed to click teleport button")
+            return False
+
+        logger.info("Successfully navigated to Apocalyptic Shadow interior")
+        return True
+
     def click_teleport_to_enter(self, device) -> bool:
         """
         点击传送按钮进入忘却之庭内部页面
@@ -282,6 +328,51 @@ class TreasuresLightwardNavigator:
 
         logger.error("Failed to select Forgotten Hall nav after all retries")
         return False
+
+    def _select_nav(self, device, nav_key: str, nav_name: str) -> bool:
+        logger.info(f"Selecting {nav_name} nav...")
+
+        check_template = self.templates.get_template(f"nav/{nav_key}_check")
+        click_template = self.templates.get_template(f"nav/{nav_key}_click")
+        check_area = self.templates.get_button_area(f"nav/{nav_key}_check")
+        click_area = self.templates.get_button_area(f"nav/{nav_key}_click")
+
+        if check_template is None or click_template is None:
+            logger.error("Nav templates not loaded")
+            return False
+        if check_area is None or click_area is None:
+            logger.error("Nav button areas not found")
+            return False
+
+        for attempt in range(1, config.MAX_NAV_RETRY + 1):
+            logger.info(f"Nav selection attempt {attempt}/{config.MAX_NAV_RETRY}")
+
+            device.screenshot()
+            image = device.image
+
+            click_pos = self._find_template(
+                image, click_template, click_area, threshold=config.TEMPLATE_MATCH_THRESHOLD_CLICK
+            )
+            if click_pos is None:
+                logger.warning(f"Nav click button not found (attempt {attempt})")
+                if attempt < config.MAX_NAV_RETRY:
+                    time.sleep(config.RETRY_WAIT_INTERVAL)
+                    continue
+                return False
+
+            self._click_position(device, click_pos)
+            time.sleep(1.5)
+
+            logger.info("Nav selection successful (clicked)")
+            return True
+
+        return False
+
+    def select_pure_fiction_nav(self, device) -> bool:
+        return self._select_nav(device, nav_key="pure_fiction", nav_name="Pure Fiction")
+
+    def select_apocalyptic_shadow_nav(self, device) -> bool:
+        return self._select_nav(device, nav_key="apocalyptic_shadow", nav_name="Apocalyptic Shadow")
 
     # =========================================================================
     # 内部辅助方法

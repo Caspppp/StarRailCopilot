@@ -13,7 +13,7 @@ class ManualConfig:
     > Weekly > Ornament > Dungeon > Assignment
     > BattlePass > DailyQuest
     > Freebies > DataUpdate > RelicEnhance
-    > Rogue > ForgottenHallChallenge
+    > Rogue > CurrencyWar > ForgottenHallChallenge
     """
 
     """

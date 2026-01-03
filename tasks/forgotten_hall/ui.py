@@ -613,7 +613,7 @@ class DraggableStageList(DraggableList):
         return main.appear(ENTRANCE_CHECKED)
 
     def load_rows(self, main: ModuleBase):
-        if main.appear(MEMORY_OF_CHAOS_CHECK) or main.appear(LAST_VASTIGES_CHECK):
+        if main.appear(FORGOTTEN_HALL_CHECK) or main.appear(MEMORY_OF_CHAOS_CHECK) or main.appear(LAST_VASTIGES_CHECK):
             return super().load_rows(main=main)
         else:
             logger.info('Not in forgotten hall, skip load_rows()')
@@ -689,6 +689,114 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
 
         self.stage_choose(dungeon)
         return True
+
+    def _wait_for_stage_list_loaded(self, timeout: float = 20.0, skip_first_screenshot=True) -> bool:
+        """
+        等待关卡列表加载完成（逐光捡金：虚构叙事 / 末日幻影也会复用同一套关卡列表OCR）
+
+        Returns:
+            bool: 是否在超时内加载成功
+        """
+        timeout_timer = Timer(timeout).start()
+        while not timeout_timer.reached():
+            if skip_first_screenshot:
+                skip_first_screenshot = False
+            else:
+                self.device.screenshot()
+
+            if self.handle_forgotten_hall_buff():
+                continue
+
+            # 仍在外部界面时可能会看到传送按钮，补点击一次
+            if self.appear_then_click(TELEPORT, interval=2):
+                continue
+
+            if self.appear(FORGOTTEN_HALL_CHECK):
+                STAGE_LIST.load_rows(main=self)
+                if STAGE_LIST.cur_buttons:
+                    return True
+
+            self.device.sleep(0.3)
+
+        logger.warning('Wait stage list loaded timeout')
+        return False
+
+    def goto_stage_selection_by_dungeon_type(self, dungeon_type: str) -> bool:
+        """
+        根据配置中的 DungeonType/DungeonTypes 导航到对应模式的关卡选择界面
+
+        Args:
+            dungeon_type: Memory_of_Chaos / The_Last_Vestiges_of_Towering_Citadel / Pure_Fiction / Apocalyptic_Shadow
+        """
+        if dungeon_type == 'Memory_of_Chaos':
+            return self.goto_stage_selection(KEYWORDS_DUNGEON_LIST.Memory_of_Chaos)
+        if dungeon_type == 'The_Last_Vestiges_of_Towering_Citadel':
+            return self.goto_stage_selection(KEYWORDS_DUNGEON_LIST.The_Last_Vestiges_of_Towering_Citadel)
+
+        if dungeon_type in ('Pure_Fiction', 'Apocalyptic_Shadow'):
+            self.ui_ensure(page_guide)
+            from tools.forgotten_hall_navigator import TreasuresLightwardNavigator
+
+            navigator = TreasuresLightwardNavigator()
+            if dungeon_type == 'Pure_Fiction':
+                if not navigator.goto_pure_fiction_from_guide(self.device):
+                    logger.error('Failed to navigate to Pure Fiction via Treasures Lightward')
+                    return False
+            else:
+                if not navigator.goto_apocalyptic_shadow_from_guide(self.device):
+                    logger.error('Failed to navigate to Apocalyptic Shadow via Treasures Lightward')
+                    return False
+
+            if not self._wait_for_stage_list_loaded(timeout=20.0, skip_first_screenshot=True):
+                logger.error('Failed to load stage list after navigation')
+                return False
+            return True
+
+        logger.error(f'Unknown dungeon type: {dungeon_type}')
+        return False
+
+    def stage_goto_by_dungeon_type(
+        self,
+        dungeon_type: str,
+        stage_keyword: ForgottenHallStage,
+        team1_preset: int = None,
+        team2_preset: int = None,
+    ) -> bool:
+        """
+        根据 dungeon_type 导航到指定关卡并配置预设编队
+        """
+        if dungeon_type == 'Memory_of_Chaos':
+            return self.stage_goto(
+                KEYWORDS_DUNGEON_LIST.Memory_of_Chaos,
+                stage_keyword,
+                team1_preset=team1_preset,
+                team2_preset=team2_preset,
+            )
+        if dungeon_type == 'The_Last_Vestiges_of_Towering_Citadel':
+            return self.stage_goto(
+                KEYWORDS_DUNGEON_LIST.The_Last_Vestiges_of_Towering_Citadel,
+                stage_keyword,
+                team1_preset=team1_preset,
+                team2_preset=team2_preset,
+            )
+
+        if dungeon_type in ('Pure_Fiction', 'Apocalyptic_Shadow'):
+            if not self.goto_stage_selection_by_dungeon_type(dungeon_type):
+                return False
+
+            logger.info(f'Stage list select: {stage_keyword}')
+            STAGE_LIST.select_row(stage_keyword, main=self)
+
+            if team1_preset or team2_preset:
+                logger.hr('Configure preset teams', level=1)
+                self._click_preset_team(timeout=15)
+                self._configure_preset_teams(team1_preset, team2_preset)
+                logger.info('Preset teams configuration completed')
+
+            return True
+
+        logger.error(f'Unknown dungeon type: {dungeon_type}')
+        return False
 
     def stage_goto(self, dungeon: DungeonList, stage_keyword: ForgottenHallStage,
                    team1_preset: int = None, team2_preset: int = None):

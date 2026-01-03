@@ -399,17 +399,16 @@ str2type = {
 }
 
 
-def parse_pin_value(val, valuetype: str = None):
+def parse_pin_value(val, valuetype: str = None, widget_type: str = None):
     """
     input, textarea return str
-    select return its option (str or int)
+    select return its option (str or int), or list when multiple=True
     checkbox return [] or [True] (define in put_checkbox_)
     """
+    if widget_type == "checkbox" and isinstance(val, list):
+        return bool(val)
     if isinstance(val, list):
-        if len(val) == 0:
-            return False
-        else:
-            return True
+        return val
     elif valuetype:
         return str2type[valuetype](val)
     elif isinstance(val, (int, float)):

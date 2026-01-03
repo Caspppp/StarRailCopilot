@@ -707,7 +707,8 @@ class AlasGUI(Frame):
             config = config_updater.read_file(config_name)
             for k, v in modified.copy().items():
                 valuetype = deep_get(self.ALAS_ARGS, k + ".valuetype")
-                v = parse_pin_value(v, valuetype)
+                widget_type = deep_get(self.ALAS_ARGS, k + ".type")
+                v = parse_pin_value(v, valuetype, widget_type)
                 validate = deep_get(self.ALAS_ARGS, k + ".validate")
                 if not len(str(v)):
                     default = deep_get(self.ALAS_ARGS, k + ".value")
