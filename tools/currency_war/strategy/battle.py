@@ -37,6 +37,7 @@ class CurrencyWarBattle(CurrencyWarUI):
             CURRENCY_WAR_CONTINUE_CHALLENGE,
             CURRENCY_WAR_INVEST_POPUP_TITLE,
             CURRENCY_WAR_INVEST_CONFIRM,
+            CURRENCY_WAR_INVEST_CONFIRM_BATTLE,
             CURRENCY_WAR_INVEST_UNDISCOVERED_OPTION_1,
             CURRENCY_WAR_INVEST_UNDISCOVERED_OPTION_2,
             CURRENCY_WAR_INVEST_UNDISCOVERED_OPTION_3,
@@ -76,8 +77,21 @@ class CurrencyWarBattle(CurrencyWarUI):
                 self.device.click(options[0][0])
                 self.device.sleep(0.8)
 
-        # 1) 将备战席位棋子拖到前台区域（并等待落子完成）
-        self.currency_war_deploy_bench_pieces_to_front(deploy_count=3)
+        # 1) 将备战席位棋子拖到前台区域（并确保上阵完成）
+        deploy_timeout = Timer(25).start()
+        first_try = True
+        while not deploy_timeout.reached():
+            if self.currency_war_deploy_bench_pieces_to_front(
+                deploy_count=3,
+                wait_timeout=10.0 if first_try else 3.0,
+                wait_interval=0.4,
+            ):
+                break
+            first_try = False
+            self.device.sleep(0.4)
+        else:
+            logger.error('Deploy did not reach required count')
+            raise CurrencyWarBattleTimeout
 
         # 2) 点击出战按钮
         timeout = Timer(15).start()
@@ -131,7 +145,7 @@ class CurrencyWarBattle(CurrencyWarUI):
             if self.handle_popup_single():
                 continue
 
-            if self.appear(CURRENCY_WAR_INVEST_POPUP_TITLE) or self.appear(CURRENCY_WAR_INVEST_CONFIRM):
+            if self.appear(CURRENCY_WAR_INVEST_POPUP_TITLE) or self.appear(CURRENCY_WAR_INVEST_CONFIRM_BATTLE):
                 break
 
             self.device.sleep(1.0)
@@ -150,7 +164,7 @@ class CurrencyWarBattle(CurrencyWarUI):
             if self.handle_popup_single():
                 continue
 
-            if self.appear_then_click(CURRENCY_WAR_INVEST_CONFIRM, interval=1):
+            if self.appear_then_click(CURRENCY_WAR_INVEST_CONFIRM_BATTLE, interval=1):
                 self.device.sleep(2.0)
                 break
 
@@ -159,94 +173,138 @@ class CurrencyWarBattle(CurrencyWarUI):
             logger.error('Investment confirm button not found')
             raise CurrencyWarBattleTimeout
 
-        # 5) 收起商店界面（可选）
-        self.device.screenshot()
-        if self.appear_then_click(CURRENCY_WAR_SHOP_COLLAPSE, interval=2):
-            self.device.sleep(1.0)
-
-        # 6) 退出 → 放弃并结算
-        exit_timeout = Timer(15).start()
-        while not exit_timeout.reached():
-            self.device.screenshot()
-
-            if self.handle_popup_confirm():
-                continue
-            if self.handle_popup_single():
-                continue
-
-            if self.appear_then_click(CURRENCY_WAR_EXIT, interval=1):
-                self.device.sleep(1.0)
-                break
-
-            # 有时需要先收起商店才出现退出按钮
-            self.appear_then_click(CURRENCY_WAR_SHOP_COLLAPSE, interval=2)
-            self.device.sleep(0.3)
-        else:
-            logger.error('Exit button not found')
+        # 5) 收起商店界面（让退出按钮出现）
+        if not self.click_until_appear(
+            CURRENCY_WAR_SHOP_COLLAPSE,
+            CURRENCY_WAR_EXIT,
+            timeout=20,
+            interval=0.2,
+            click_interval=1.0,
+            skip_first_screenshot=False,
+        ):
+            logger.error('Exit button not found (shop collapse may have failed)')
             raise CurrencyWarBattleTimeout
 
-        give_up_timeout = Timer(15).start()
-        while not give_up_timeout.reached():
-            self.device.screenshot()
-
-            if self.handle_popup_confirm():
-                continue
-            if self.handle_popup_single():
-                continue
-
-            if self.appear_then_click(CURRENCY_WAR_GIVE_UP_AND_SETTLE, interval=1):
-                self.device.sleep(2.5)
-                break
-
-            self.device.sleep(0.5)
-        else:
+        # 6) 退出 → 放弃并结算 → 结算页按钮链路
+        # 退出菜单里的“暂时离开”容易被 POPUP_CONFIRM 误识别，所以这里在菜单阶段禁用通用弹窗处理。
+        if not self.click_until_appear(
+            CURRENCY_WAR_EXIT,
+            lambda: self.appear(CURRENCY_WAR_GIVE_UP_AND_SETTLE, similarity=0.9),
+            timeout=15,
+            interval=0.2,
+            click_interval=1.0,
+            skip_first_screenshot=False,
+            handle_popups=False,
+        ):
             logger.error('Give up and settle button not found')
             raise CurrencyWarBattleTimeout
 
-        # 7) 结算页：下一步 → 下一页 → 返回货币战争
-        settle_timeout = Timer(40).start()
-        while not settle_timeout.reached():
-            self.device.screenshot()
-            if self.appear_then_click(CURRENCY_WAR_SETTLE_NEXT, interval=1):
-                self.device.sleep(1.2)
-                break
-            if self.handle_popup_confirm():
-                continue
-            if self.handle_popup_single():
-                continue
-            self.device.sleep(0.5)
-        else:
-            logger.error('Settle next button not found')
-            raise CurrencyWarBattleTimeout
+        from tasks.base.assets.assets_base_popup import POPUP_CONFIRM, POPUP_CANCEL, POPUP_SINGLE
 
-        settle_timeout = Timer(40).start()
-        while not settle_timeout.reached():
+        def is_confirm_dialog() -> bool:
+            # 同时出现取消+确认，才视为真正的确认弹窗
+            return self.appear(POPUP_CONFIRM) and self.appear(POPUP_CANCEL)
+
+        give_up_click = ClickButton(area=(431, 518, 532, 540), name='CURRENCY_WAR_GIVE_UP_AND_SETTLE_CLICK')
+
+        # Phase 1: 点击“放弃并结算”→ 等确认弹窗（或直接进入结算页）
+        for _ in range(6):
             self.device.screenshot()
-            if self.appear_then_click(CURRENCY_WAR_SETTLE_NEXT_PAGE, interval=1):
-                self.device.sleep(1.2)
+
+            if self.appear(CURRENCY_WAR_SETTLE_NEXT):
                 break
-            if self.handle_popup_confirm():
+            if is_confirm_dialog():
+                break
+
+            if not self.appear(CURRENCY_WAR_GIVE_UP_AND_SETTLE, similarity=0.9):
+                # 菜单意外关闭：重新打开退出菜单
+                self.click_until_appear(
+                    CURRENCY_WAR_EXIT,
+                    lambda: self.appear(CURRENCY_WAR_GIVE_UP_AND_SETTLE, similarity=0.9),
+                    timeout=6,
+                    interval=0.2,
+                    click_interval=1.0,
+                    skip_first_screenshot=False,
+                    handle_popups=False,
+                )
                 continue
-            if self.handle_popup_single():
-                continue
-            self.device.sleep(0.5)
-        else:
+
+            self.device.click(give_up_click)
+
+            # 等待弹窗/结算页出现；期间不自动点 POPUP_CONFIRM，避免误点“暂时离开”
+            self.wait_until(
+                appear=lambda: is_confirm_dialog() or self.appear(CURRENCY_WAR_SETTLE_NEXT),
+                disappear=lambda: not self.appear(CURRENCY_WAR_GIVE_UP_AND_SETTLE, similarity=0.9),
+                timeout=2.0,
+                interval=0.15,
+                skip_first_screenshot=False,
+                handle_popups=False,
+            )
+
+        # Phase 2: 确认弹窗 → 点击确认 → 等结算页
+        if not self.appear(CURRENCY_WAR_SETTLE_NEXT):
+            self.device.screenshot()
+
+        if is_confirm_dialog():
+            if not self.click_until_appear(
+                POPUP_CONFIRM,
+                CURRENCY_WAR_SETTLE_NEXT,
+                timeout=30,
+                interval=0.2,
+                click_interval=1.0,
+                skip_first_screenshot=False,
+                handle_popups=False,
+            ):
+                logger.error('Settle next button not found after confirming give up')
+                raise CurrencyWarBattleTimeout
+        elif not self.appear(CURRENCY_WAR_SETTLE_NEXT):
+            # 兜底：可能出现单按钮弹窗
+            if self.appear_then_click(POPUP_SINGLE, interval=0.8):
+                if not self.wait_until_appear(
+                    CURRENCY_WAR_SETTLE_NEXT,
+                    timeout=30,
+                    interval=0.3,
+                    skip_first_screenshot=False,
+                    handle_popups=False,
+                ):
+                    logger.error('Settle next button not found')
+                    raise CurrencyWarBattleTimeout
+            else:
+                logger.error('Give up flow did not reach confirm dialog or settle page')
+                raise CurrencyWarBattleTimeout
+
+        # 7) 结算页：下一步 → 下一页 → 返回货币战争
+        if not self.click_until_appear(
+            CURRENCY_WAR_SETTLE_NEXT,
+            CURRENCY_WAR_SETTLE_NEXT_PAGE,
+            timeout=30,
+            interval=0.3,
+            click_interval=1.0,
+            skip_first_screenshot=False,
+        ):
             logger.error('Settle next page button not found')
             raise CurrencyWarBattleTimeout
 
-        settle_timeout = Timer(40).start()
-        while not settle_timeout.reached():
-            self.device.screenshot()
-            if self.appear_then_click(CURRENCY_WAR_RETURN_TO_CURRENCY_WAR, interval=1):
-                self.device.sleep(2.0)
-                break
-            if self.handle_popup_confirm():
-                continue
-            if self.handle_popup_single():
-                continue
-            self.device.sleep(0.5)
-        else:
+        if not self.click_until_appear(
+            CURRENCY_WAR_SETTLE_NEXT_PAGE,
+            CURRENCY_WAR_RETURN_TO_CURRENCY_WAR,
+            timeout=30,
+            interval=0.3,
+            click_interval=1.0,
+            skip_first_screenshot=False,
+        ):
             logger.error('Return to currency war button not found')
+            raise CurrencyWarBattleTimeout
+
+        if not self.click_until_appear(
+            CURRENCY_WAR_RETURN_TO_CURRENCY_WAR,
+            CURRENCY_WAR_MAIN_CHECK,
+            timeout=30,
+            interval=0.3,
+            click_interval=1.0,
+            skip_first_screenshot=False,
+        ):
+            logger.error('Currency war main page not found after settle')
             raise CurrencyWarBattleTimeout
 
         # 8) 等待回到货币战争主界面

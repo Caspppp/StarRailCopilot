@@ -128,7 +128,7 @@ CURRENCY_WAR_OVERCLOCK_NEXT = ButtonWrapper(
     ),
 )
 
-# 投资环境确认按钮
+# 投资环境确认按钮（首次进入时）
 CURRENCY_WAR_INVEST_CONFIRM = ButtonWrapper(
     name='CURRENCY_WAR_INVEST_CONFIRM',
     share=Button(
@@ -140,7 +140,19 @@ CURRENCY_WAR_INVEST_CONFIRM = ButtonWrapper(
     ),
 )
 
-# 投资环境“未解锁/未收录”标识（用于优先选择开图鉴）
+# 投资环境确认按钮（战斗后）
+CURRENCY_WAR_INVEST_CONFIRM_BATTLE = ButtonWrapper(
+    name='CURRENCY_WAR_INVEST_CONFIRM_BATTLE',
+    share=Button(
+        file='./assets/share/currency_war/ui/INVEST_CONFIRM_BATTLE.png',
+        area=(635, 648, 676, 668),
+        search=(615, 628, 696, 688),
+        color=(171, 171, 171),
+        button=(635, 648, 676, 668),
+    ),
+)
+
+# 投资环境"未解锁/未收录"标识（用于优先选择开图鉴）
 CURRENCY_WAR_INVEST_UNDISCOVERED_OPTION_1 = ButtonWrapper(
     name='CURRENCY_WAR_INVEST_UNDISCOVERED_OPTION_1',
     share=Button(
@@ -238,10 +250,10 @@ CURRENCY_WAR_GIVE_UP_AND_SETTLE = ButtonWrapper(
     name='CURRENCY_WAR_GIVE_UP_AND_SETTLE',
     share=Button(
         file='./assets/share/currency_war/ui/GIVE_UP_AND_SETTLE.png',
-        area=(429, 519, 533, 541),
-        search=(409, 499, 553, 561),
-        color=(161, 161, 161),
-        button=(429, 519, 533, 541),
+        area=(431, 518, 532, 540),
+        search=(411, 498, 552, 560),
+        color=(160, 160, 160),
+        button=(431, 518, 532, 540),
     ),
 )
 

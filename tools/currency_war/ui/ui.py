@@ -99,6 +99,134 @@ class CurrencyWarUI(UI):
             count=20
         )
 
+    def _cond_appear(self, cond, similarity: float = 0.85) -> bool:
+        if cond is None:
+            return False
+        if callable(cond):
+            return bool(cond())
+        if isinstance(cond, (list, tuple, set)):
+            return any(self._cond_appear(c, similarity=similarity) for c in cond)
+        return self.appear(cond, similarity=similarity)
+
+    def _cond_disappear(self, cond, similarity: float = 0.85) -> bool:
+        if cond is None:
+            return False
+        if callable(cond):
+            return not bool(cond())
+        if isinstance(cond, (list, tuple, set)):
+            return all(self._cond_disappear(c, similarity=similarity) for c in cond)
+        return not self.appear(cond, similarity=similarity)
+
+    def wait_until(
+        self,
+        *,
+        appear=None,
+        disappear=None,
+        timeout: float = 5.0,
+        interval: float = 0.2,
+        similarity: float = 0.85,
+        skip_first_screenshot: bool = True,
+        handle_popups: bool = True,
+    ) -> bool:
+        """
+        等待界面状态变化（避免硬编码 sleep）。
+
+        - `appear`: 目标出现（Button/Wrapper/xpath/callable/可迭代）
+        - `disappear`: 目标消失（Button/Wrapper/xpath/callable/可迭代）
+        """
+        from module.base.timer import Timer
+
+        timer = Timer(timeout).start()
+        while not timer.reached():
+            if skip_first_screenshot:
+                skip_first_screenshot = False
+            else:
+                self.device.screenshot()
+
+            if handle_popups:
+                if self.handle_popup_confirm():
+                    continue
+                if self.handle_popup_single():
+                    continue
+
+            if appear is not None and self._cond_appear(appear, similarity=similarity):
+                return True
+            if disappear is not None and self._cond_disappear(disappear, similarity=similarity):
+                return True
+
+            self.device.sleep(interval)
+
+        return False
+
+    def click_until(
+        self,
+        click_target,
+        *,
+        appear=None,
+        disappear=None,
+        timeout: float = 6.0,
+        interval: float = 0.2,
+        click_interval: float = 0.6,
+        similarity: float = 0.85,
+        skip_first_screenshot: bool = True,
+        handle_popups: bool = True,
+    ) -> bool:
+        """
+        重试点击并等待状态变化（点击后等到“下一个按钮/界面”出现再继续）。
+
+        Args:
+            click_target: Button/Wrapper 用 appear_then_click；ClickButton 直接点击
+            appear: 点击后出现的目标
+            disappear: 点击后消失的目标
+        """
+        from module.base.button import ClickButton
+        from module.base.timer import Timer
+
+        timeout_timer = Timer(timeout).start()
+        click_timer = Timer(click_interval).start()
+        clicked_once = False
+
+        while not timeout_timer.reached():
+            if skip_first_screenshot:
+                skip_first_screenshot = False
+            else:
+                self.device.screenshot()
+
+            if handle_popups:
+                if self.handle_popup_confirm():
+                    continue
+                if self.handle_popup_single():
+                    continue
+
+            if appear is not None and self._cond_appear(appear, similarity=similarity):
+                return True
+            if disappear is not None and self._cond_disappear(disappear, similarity=similarity):
+                return True
+
+            if isinstance(click_target, ClickButton):
+                if not clicked_once or click_timer.reached_and_reset():
+                    self.device.click(click_target)
+                    clicked_once = True
+            else:
+                if self.appear_then_click(click_target, interval=click_interval, similarity=similarity):
+                    clicked_once = True
+
+            self.device.sleep(interval)
+
+        return False
+
+    def wait_until_appear(self, target, **kwargs) -> bool:
+        return self.wait_until(appear=target, **kwargs)
+
+    def wait_until_disappear(self, target, **kwargs) -> bool:
+        return self.wait_until(disappear=target, **kwargs)
+
+    def click_until_appear(self, click_target, appear_target, **kwargs) -> bool:
+        return self.click_until(click_target, appear=appear_target, **kwargs)
+
+    def click_until_disappear(self, click_target, disappear_target, **kwargs) -> bool:
+        return self.click_until(click_target, disappear=disappear_target, **kwargs)
+
     def currency_war_deploy_bench_pieces_to_front(
         self,
         deploy_count: int = 3,
@@ -114,7 +242,7 @@ class CurrencyWarUI(UI):
             3. 将最多 `deploy_count` 个棋子拖到前台空位（优先空位）
 
         Returns:
-            bool: 是否执行了拖动操作
+            bool: 是否确保前台至少上阵 `deploy_count` 个棋子（或受限于前台格子数量）
         """
         import numpy as np
 
@@ -248,73 +376,109 @@ class CurrencyWarUI(UI):
             )
             return False
 
-        # 1) 找前台空位
-        empty_front: list[int] = []
-        for idx, btn in enumerate(front_empty_buttons):
-            if self.match_template_luma(btn, similarity=0.8):
-                empty_front.append(idx)
-        if not empty_front:
-            logger.info('No empty front slot detected, skip deploy')
-            return False
+        def get_front_empty_indices() -> list[int]:
+            empty: list[int] = []
+            for i, btn in enumerate(front_empty_buttons):
+                if self.match_template_luma(btn, similarity=0.8):
+                    empty.append(i)
+            return empty
 
-        # 3) 去重：通过棋子截图相似度判断“同一棋子”
-        unique_bench = []
-        unique_lumas = []
+        slot_total = len(front_slot_areas)
+        target_total = min(deploy_count, slot_total)
 
-        for idx in occupied_bench:
-            x1, y1, x2, y2 = bench_slot_areas[idx]
-            inner = (x1 + 10, y1 + 10, x2 - 10, y2 - 10)
-            piece_luma = rgb2luma(self.image_crop(inner, copy=False))
+        self.device.screenshot()
+        empty_front = get_front_empty_indices()
+        filled_front = slot_total - len(empty_front)
+        if filled_front >= target_total:
+            logger.info(f'Front already has {filled_front}/{target_total} pieces, skip deploy')
+            return True
 
-            duplicated = False
-            for rep in unique_lumas:
-                if match_template(piece_luma, rep, similarity=0.9):
-                    duplicated = True
-                    break
+        # 多轮尝试：处理“落子延迟/拖动失败”导致的空位遗漏
+        for pass_ in range(3):
+            self.device.screenshot()
+            occupied_bench, _ = scan_bench_occupied()
 
-            if duplicated:
-                continue
+            empty_front = get_front_empty_indices()
+            filled_front = slot_total - len(empty_front)
+            need = max(0, target_total - filled_front)
 
-            unique_bench.append(idx)
-            unique_lumas.append(piece_luma)
-            if len(unique_bench) >= deploy_count:
+            if need <= 0:
+                break
+            if not occupied_bench:
                 break
 
-        # 若唯一棋子不足，补充剩余格子（允许重复）
-        selected = list(unique_bench)
-        if len(selected) < deploy_count:
+            # 去重：通过棋子截图相似度判断“同一棋子”
+            unique_bench: list[int] = []
+            unique_lumas: list[np.ndarray] = []
+
             for idx in occupied_bench:
-                if idx in selected:
+                x1, y1, x2, y2 = bench_slot_areas[idx]
+                inner = (x1 + 10, y1 + 10, x2 - 10, y2 - 10)
+                piece_luma = rgb2luma(self.image_crop(inner, copy=False))
+
+                if any(match_template(piece_luma, rep, similarity=0.9) for rep in unique_lumas):
                     continue
-                selected.append(idx)
-                if len(selected) >= deploy_count:
+
+                unique_bench.append(idx)
+                unique_lumas.append(piece_luma)
+                if len(unique_bench) >= need:
                     break
 
-        # 4) 选择目标空位
-        move_count = min(len(selected), len(empty_front), deploy_count)
-        if move_count <= 0:
+            # 若唯一棋子不足，补充剩余格子（允许重复）
+            selected = list(unique_bench)
+            if len(selected) < need:
+                for idx in occupied_bench:
+                    if idx in selected:
+                        continue
+                    selected.append(idx)
+                    if len(selected) >= need:
+                        break
+
+            if not selected:
+                break
+
+            logger.info(f'Deploy pass {pass_ + 1}: need={need}, bench={selected}')
+
+            for bench_idx in selected:
+                empty_front = get_front_empty_indices()
+                if not empty_front:
+                    break
+
+                filled_front = slot_total - len(empty_front)
+                need = max(0, target_total - filled_front)
+                if need <= 0:
+                    break
+
+                front_idx = empty_front[0]
+                p1 = area_center(bench_slot_areas[bench_idx])
+                p2 = area_center(front_slot_areas[front_idx])
+
+                for attempt in range(3):
+                    self.device.drag(
+                        p1,
+                        p2,
+                        name=f'CURRENCY_WAR_DEPLOY_{bench_idx + 1}_TO_{front_idx + 1}_TRY_{attempt + 1}',
+                        swipe_duration=0.35 + 0.1 * attempt,
+                    )
+
+                    # 等待目标格子不再匹配“空格子模板”，确认拖动生效
+                    if self.wait_until(
+                        appear=lambda: not self.match_template_luma(front_empty_buttons[front_idx], similarity=0.8),
+                        timeout=3.0,
+                        interval=0.2,
+                        skip_first_screenshot=False,
+                        handle_popups=False,
+                    ):
+                        break
+                else:
+                    logger.warning(f'Deploy failed: bench {bench_idx + 1} -> front {front_idx + 1}')
+
+        # 最终校验：确保至少放上目标数量
+        self.device.screenshot()
+        empty_front = get_front_empty_indices()
+        filled_front = slot_total - len(empty_front)
+        if filled_front < target_total:
+            logger.warning(f'Deploy incomplete: {filled_front}/{target_total} pieces on front')
             return False
-
-        selected = selected[:move_count]
-        dest_front = empty_front[:move_count]
-
-        logger.info(f'Deploy pieces: bench={selected} -> front={dest_front}')
-
-        # 5) 拖动上阵
-        for bench_idx, front_idx in zip(selected, dest_front):
-            p1 = area_center(bench_slot_areas[bench_idx])
-            p2 = area_center(front_slot_areas[front_idx])
-            self.device.drag(p1, p2, name=f'CURRENCY_WAR_DEPLOY_{bench_idx + 1}_TO_{front_idx + 1}')
-            self.device.sleep(0.6)
-
-            # 等待目标格子不再匹配“空格子模板”，确认拖动生效后再进行下一步
-            verify = Timer(3).start()
-            while not verify.reached():
-                self.device.screenshot()
-                if not self.match_template_luma(front_empty_buttons[front_idx], similarity=0.8):
-                    break
-                self.device.sleep(0.2)
-            else:
-                logger.warning(f'Deploy verify timeout: front slot {front_idx + 1} still empty')
 
         return True
