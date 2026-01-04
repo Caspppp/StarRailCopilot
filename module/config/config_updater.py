@@ -780,6 +780,12 @@ class ConfigUpdater:
         ('Dungeon.DungeonDaily.CalyxCrimson', 'Dungeon.DungeonDaily.CalyxCrimson', convert_31_dungeon),
         # 3.2
         ('Weekly.Weekly.Name', 'Weekly.Weekly.Name', convert_32_weekly),
+        # ForgottenHallChallenge: migrate single-select to multi-select
+        (
+            'ForgottenHallChallenge.ForgottenHallChallenge.DungeonType',
+            'ForgottenHallChallenge.ForgottenHallChallenge.DungeonTypes',
+            lambda v: ['Memory_of_Chaos'] if v == 'The_Last_Vestiges_of_Towering_Citadel' else [v],
+        ),
     ]
 
     @cached_property

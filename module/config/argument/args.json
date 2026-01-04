@@ -2432,12 +2432,25 @@
       }
     },
     "ForgottenHallChallenge": {
+      "DungeonTypes": {
+        "type": "select",
+        "value": [
+          "Memory_of_Chaos"
+        ],
+        "option": [
+          "Memory_of_Chaos",
+          "Pure_Fiction",
+          "Apocalyptic_Shadow"
+        ],
+        "multiple": true
+      },
       "DungeonType": {
         "type": "select",
         "value": "Memory_of_Chaos",
         "option": [
           "Memory_of_Chaos",
-          "The_Last_Vestiges_of_Towering_Citadel"
+          "Pure_Fiction",
+          "Apocalyptic_Shadow"
         ]
       },
       "Stage": {
@@ -2455,10 +2468,7 @@
           9,
           10,
           11,
-          12,
-          13,
-          14,
-          15
+          12
         ]
       },
       "Team1Preset": {

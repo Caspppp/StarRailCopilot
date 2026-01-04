@@ -68,14 +68,12 @@ class CurrencyWarBattle(CurrencyWarUI):
                     if self.match_template_luma(undiscovered_btn, similarity=0.75):
                         logger.info(f'Choosing undiscovered investment option: {click_btn}')
                         self.device.click(click_btn)
-                        self.device.sleep(0.8)
                         chosen = True
                         break
 
             if not chosen:
                 logger.info('No undiscovered investment option found, choosing option 1')
                 self.device.click(options[0][0])
-                self.device.sleep(0.8)
 
         # 1) 将备战席位棋子拖到前台区域（并确保上阵完成）
         deploy_timeout = Timer(25).start()
@@ -88,88 +86,53 @@ class CurrencyWarBattle(CurrencyWarUI):
             ):
                 break
             first_try = False
-            self.device.sleep(0.4)
         else:
             logger.error('Deploy did not reach required count')
             raise CurrencyWarBattleTimeout
 
-        # 2) 点击出战按钮
-        timeout = Timer(15).start()
-        while not timeout.reached():
-            self.device.screenshot()
-
-            if self.handle_popup_confirm():
-                continue
-            if self.handle_popup_single():
-                continue
-
-            if self.appear_then_click(CURRENCY_WAR_BATTLE_FIGHT, interval=1):
-                self.device.sleep(2.0)
-                break
-        else:
+        # 2) 点击出战按钮并等待战斗结束：期间可点击“空白加速”（可消失，点不到也继续等）
+        if not self.wait_until_appear(
+            CURRENCY_WAR_BATTLE_FIGHT,
+            timeout=15,
+            interval=0.3,
+            skip_first_screenshot=False,
+        ):
             logger.error('Battle fight button not found')
             raise CurrencyWarBattleTimeout
 
-        # 3) 等待战斗结束：期间可点击“空白加速”（可消失，点不到也继续等）
-        battle_timeout = Timer(180).start()
-        while not battle_timeout.reached():
-            self.device.screenshot()
-
-            if self.handle_popup_confirm():
-                continue
-            if self.handle_popup_single():
-                continue
-
-            if self.appear_then_click(CURRENCY_WAR_CONTINUE_CHALLENGE, interval=1):
-                self.device.sleep(2.0)
-                break
-
-            # 点击空白加速（不保证存在）
-            if self.appear_then_click(CURRENCY_WAR_BATTLE_FIGHT, interval=3):
-                logger.info('Clicking battle speedup')
-                self.device.sleep(0.3)
-                continue
-
-            self.device.sleep(1.0)
-        else:
+        if not self.click_until_appear(
+            CURRENCY_WAR_BATTLE_FIGHT,
+            CURRENCY_WAR_CONTINUE_CHALLENGE,
+            timeout=180,
+            interval=0.5,
+            click_interval=3.0,
+            skip_first_screenshot=False,
+        ):
             logger.error('Battle did not finish in time')
             raise CurrencyWarBattleTimeout
 
-        # 4) 等待投资环境弹窗出现并选择（策略同开局：优先未解锁/未收录）
-        popup_timeout = Timer(30).start()
-        while not popup_timeout.reached():
-            self.device.screenshot()
-
-            if self.handle_popup_confirm():
-                continue
-            if self.handle_popup_single():
-                continue
-
-            if self.appear(CURRENCY_WAR_INVEST_POPUP_TITLE) or self.appear(CURRENCY_WAR_INVEST_CONFIRM_BATTLE):
-                break
-
-            self.device.sleep(1.0)
-        else:
+        # 3) 继续挑战 → 等待投资环境弹窗出现
+        if not self.click_until_appear(
+            CURRENCY_WAR_CONTINUE_CHALLENGE,
+            [CURRENCY_WAR_INVEST_POPUP_TITLE, CURRENCY_WAR_INVEST_CONFIRM_BATTLE],
+            timeout=30,
+            interval=0.3,
+            click_interval=1.0,
+            skip_first_screenshot=False,
+        ):
             logger.error('Investment popup not found')
             raise CurrencyWarBattleTimeout
 
         choose_investment_option()
 
-        confirm_timeout = Timer(15).start()
-        while not confirm_timeout.reached():
-            self.device.screenshot()
-
-            if self.handle_popup_confirm():
-                continue
-            if self.handle_popup_single():
-                continue
-
-            if self.appear_then_click(CURRENCY_WAR_INVEST_CONFIRM_BATTLE, interval=1):
-                self.device.sleep(2.0)
-                break
-
-            self.device.sleep(0.5)
-        else:
+        if not self.click_until_appear(
+            CURRENCY_WAR_INVEST_CONFIRM_BATTLE,
+            [CURRENCY_WAR_SHOP_COLLAPSE, CURRENCY_WAR_EXIT],
+            timeout=20,
+            interval=0.2,
+            click_interval=1.0,
+            skip_first_screenshot=False,
+        ):
             logger.error('Investment confirm button not found')
             raise CurrencyWarBattleTimeout
 
@@ -247,7 +210,7 @@ class CurrencyWarBattle(CurrencyWarUI):
 
         if is_confirm_dialog():
             if not self.click_until_appear(
-                POPUP_CONFIRM,
+                POPUP_CANCEL,
                 CURRENCY_WAR_SETTLE_NEXT,
                 timeout=30,
                 interval=0.2,
@@ -311,35 +274,6 @@ class CurrencyWarBattle(CurrencyWarUI):
         self.wait_until_stable(CURRENCY_WAR_MAIN_CHECK, timeout=Timer(10))
         logger.info('Returned to currency war main page')
         return
-
-        round_count = 0
-        max_rounds = self.config.CurrencyWarStrategy_MaxRounds
-
-        while round_count < max_rounds:
-            round_count += 1
-            logger.hr(f'Round {round_count}', level=2)
-
-            # 1. 购买阶段
-            if self.is_page_currency_war_shop():
-                self._buy_pieces()
-
-            # 2. 战斗阶段
-            if self.is_page_currency_war_battle():
-                self._execute_auto_battle()
-
-            # 3. 检查是否结束
-            if self._is_battle_finished():
-                logger.info('Battle finished')
-                break
-
-            # 等待下一回合（防止空跑）
-            logger.info('Waiting for next round or battle phase...')
-            self.device.sleep(2)
-
-        else:
-            logger.warning(f'Reached max rounds limit: {max_rounds}')
-            logger.warning('This may indicate that battle logic is not properly implemented')
-            raise CurrencyWarBattleTimeout
 
     def _buy_pieces(self):
         """

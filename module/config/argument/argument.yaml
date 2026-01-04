@@ -460,12 +460,16 @@ Daemon:
 PlannerScan:
   ResultAdd: false
 ForgottenHallChallenge:
+  DungeonTypes:
+    multiple: true
+    value: [ Memory_of_Chaos ]
+    option: [ Memory_of_Chaos, Pure_Fiction, Apocalyptic_Shadow ]
   DungeonType:
     value: Memory_of_Chaos
-    option: [ Memory_of_Chaos, The_Last_Vestiges_of_Towering_Citadel ]
+    option: [ Memory_of_Chaos, Pure_Fiction, Apocalyptic_Shadow ]
   Stage:
     value: 10
-    option: [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 ]
+    option: [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 ]
   Team1Preset:
     value: 1
     option: [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 ]

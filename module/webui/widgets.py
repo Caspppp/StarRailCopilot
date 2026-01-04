@@ -442,24 +442,42 @@ def put_arg_planner(kwargs: T_Output_Kwargs) -> Output | None:
 
 def put_arg_select(kwargs: T_Output_Kwargs) -> Output:
     name: str = kwargs["name"]
-    value: str = kwargs["value"]
+    value = kwargs["value"]
     options: List[str] = kwargs["options"]
     options_label: List[str] = kwargs.pop("options_label", [])
     disabled: bool = kwargs.pop("disabled", False)
     _: str = kwargs.pop("invalid_feedback", None)
 
-    if disabled:
-        option = [{
-            "label": next((opt_label for opt, opt_label in zip(options, options_label) if opt == value), value),
-            "value": value,
-            "selected": True,
-        }]
+    multiple = bool(kwargs.get("multiple")) or isinstance(value, list)
+    if multiple and not isinstance(value, list):
+        value = [value]
+        kwargs["value"] = value
+    if multiple:
+        kwargs["multiple"] = True
+        selected = set(value)
     else:
-        option = [{
-            "label": opt_label,
-            "value": opt,
-            "select": opt == value,
-        } for opt, opt_label in zip(options, options_label)]
+        selected = {value}
+
+    if disabled:
+        option = []
+        for opt in options:
+            if opt not in selected:
+                continue
+            opt_label = next(
+                (label for value_, label in zip(options, options_label) if value_ == opt),
+                str(opt),
+            )
+            option.append({"label": opt_label, "value": opt, "selected": True})
+        if not option and options:
+            option = [{"label": str(value), "value": value, "selected": True}]
+    else:
+        option = []
+        for opt in options:
+            opt_label = next(
+                (label for value_, label in zip(options, options_label) if value_ == opt),
+                str(opt),
+            )
+            option.append({"label": opt_label, "value": opt, "selected": opt in selected})
     kwargs["options"] = option
 
     return put_scope(

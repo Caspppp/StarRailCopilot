@@ -182,7 +182,13 @@ def parse_value(value, data):
 
     """
     if 'option' in data:
-        if value not in data['option']:
+        options = data.get('option') or []
+        if isinstance(value, list):
+            filtered = [v for v in value if v in options]
+            if filtered:
+                return filtered
+            return data['value']
+        if value not in options:
             return data['value']
     if isinstance(value, str):
         if value == '':

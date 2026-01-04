@@ -250,8 +250,9 @@ class GeneratedConfig:
     PlannerScan_ResultAdd = False
 
     # Group `ForgottenHallChallenge`
-    ForgottenHallChallenge_DungeonType = 'Memory_of_Chaos'  # Memory_of_Chaos, The_Last_Vestiges_of_Towering_Citadel
-    ForgottenHallChallenge_Stage = 10  # 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+    ForgottenHallChallenge_DungeonTypes = ['Memory_of_Chaos']  # Memory_of_Chaos, Pure_Fiction, Apocalyptic_Shadow
+    ForgottenHallChallenge_DungeonType = 'Memory_of_Chaos'  # Memory_of_Chaos, Pure_Fiction, Apocalyptic_Shadow
+    ForgottenHallChallenge_Stage = 10  # 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
     ForgottenHallChallenge_Team1Preset = 1  # 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
     ForgottenHallChallenge_Team2Preset = 1  # 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
     ForgottenHallChallenge_AutoStageSelection = True  # True, False
