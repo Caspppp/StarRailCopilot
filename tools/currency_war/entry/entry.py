@@ -83,6 +83,38 @@ class CurrencyWarEntry(CurrencyWarNav, CurrencyWarUI):
         self.check_stop_condition()
 
         self.device.screenshot()
+        # 0. 容错：若上一次运行停留在奖励界面，先尝试关闭回到主界面
+        from module.base.timer import Timer
+        from tasks.currency_war.assets.assets_currency_war_ui import (
+            CLAIM_ALL_BUTTON,
+            CURRENCY_WAR_REWARD_CLOSE,
+        )
+        from tasks.base.assets.assets_base_page import CLOSE
+
+        if self.appear(CLAIM_ALL_BUTTON) or self.appear(CURRENCY_WAR_REWARD_CLOSE):
+            logger.info('Detected currency war reward page, trying to return to main interface')
+            closed = False
+            if self.appear(CURRENCY_WAR_REWARD_CLOSE):
+                closed = self.click_until_appear(
+                    CURRENCY_WAR_REWARD_CLOSE,
+                    CURRENCY_WAR_MAIN_CHECK,
+                    timeout=12,
+                    interval=0.2,
+                    click_interval=1.0,
+                    skip_first_screenshot=True,
+                )
+            if not closed:
+                self.click_until_appear(
+                    CLOSE,
+                    CURRENCY_WAR_MAIN_CHECK,
+                    timeout=12,
+                    interval=0.2,
+                    click_interval=1.0,
+                    skip_first_screenshot=False,
+                )
+            self.wait_until_stable(CURRENCY_WAR_MAIN_CHECK, timeout=Timer(3))
+            self.device.screenshot()
+
         if self.is_page_currency_war_main():
             logger.info('Already on currency war main interface, skip navigation')
             self.wait_until_stable(CURRENCY_WAR_MAIN_CHECK)
@@ -252,8 +284,10 @@ class CurrencyWarEntry(CurrencyWarNav, CurrencyWarUI):
         from module.base.timer import Timer
         from module.base.button import ClickButton
         from tasks.currency_war.assets.assets_currency_war_ui import (
+            CURRENCY_WAR_BATTLE_FIGHT,
             CURRENCY_WAR_OVERCLOCK_START_BATTLE,
             CURRENCY_WAR_OVERCLOCK_NEXT,
+            CURRENCY_WAR_INVEST_POPUP_TITLE,
             CURRENCY_WAR_INVEST_CONFIRM,
             CURRENCY_WAR_INVEST_UNDISCOVERED_OPTION_1,
             CURRENCY_WAR_INVEST_UNDISCOVERED_OPTION_2,
@@ -268,7 +302,8 @@ class CurrencyWarEntry(CurrencyWarNav, CurrencyWarUI):
         ])
 
         def click_blank_to_continue():
-            blank = ClickButton(area=(620, 340, 660, 380), name='CURRENCY_WAR_BLANK_CONTINUE')
+            # 避免点击屏幕中间（可能误点投资选项）
+            blank = ClickButton(area=(20, 340, 80, 400), name='CURRENCY_WAR_BLANK_CONTINUE')
             self.device.click(blank)
             self.wait_until_appear(
                 [CURRENCY_WAR_INVEST_CONFIRM, CURRENCY_WAR_OVERCLOCK_NEXT],
@@ -288,7 +323,7 @@ class CurrencyWarEntry(CurrencyWarNav, CurrencyWarUI):
         ):
             logger.warning('Overclock start battle button no response')
 
-        # 2) 通过信息页/点击空白页，直到出现投资环境确认按钮
+        # 2) 通过信息页/点击空白页，直到进入投资环境选择页
         timeout = Timer(45).start()
         while not timeout.reached():
             self.device.screenshot()
@@ -298,7 +333,8 @@ class CurrencyWarEntry(CurrencyWarNav, CurrencyWarUI):
             if self.handle_popup_single():
                 continue
 
-            if self.appear(CURRENCY_WAR_INVEST_CONFIRM):
+            # 已进入投资环境选择页：无需再点“空白继续”
+            if self.appear(CURRENCY_WAR_INVEST_POPUP_TITLE, similarity=0.8) or self.appear(CURRENCY_WAR_INVEST_CONFIRM):
                 break
 
             # 优先点“下一步”，否则点空白处继续
@@ -325,33 +361,66 @@ class CurrencyWarEntry(CurrencyWarNav, CurrencyWarUI):
              CURRENCY_WAR_INVEST_UNDISCOVERED_OPTION_3),
         ]
 
-        chosen = False
-        scan = Timer(2).start()
-        while not scan.reached() and not chosen:
-            self.device.screenshot()
-            for click_btn, undiscovered_btn in options:
-                if self.match_template_luma(undiscovered_btn, similarity=0.75):
-                    logger.info(f'Choosing undiscovered investment option: {click_btn}')
-                    self.device.click(click_btn)
-                    chosen = True
-                    break
+        def choose_investment_option():
+            chosen = False
+            scan = Timer(2).start()
+            while not scan.reached() and not chosen:
+                self.device.screenshot()
+                for click_btn, undiscovered_btn in options:
+                    if self.match_template_luma(undiscovered_btn, similarity=0.75):
+                        logger.info(f'Choosing undiscovered investment option: {click_btn}')
+                        self.device.click(click_btn)
+                        chosen = True
+                        break
 
-        if not chosen:
-            logger.info('No undiscovered investment option found, choosing option 1')
-            self.device.click(options[0][0])
+            if not chosen:
+                logger.info('No undiscovered investment option found, choosing option 1')
+                self.device.click(options[0][0])
 
-        # 6. 确认进入
-        if self.click_until_disappear(
-            CURRENCY_WAR_INVEST_CONFIRM,
-            CURRENCY_WAR_INVEST_CONFIRM,
-            timeout=15,
-            interval=0.2,
-            click_interval=1.0,
-            skip_first_screenshot=False,
-        ):
+        # 6. 投资环境选择可能会连续出现多次（部分关卡会额外多出一次选择）
+        max_investment_selections = 3
+        for idx in range(max_investment_selections):
+            # 确保弹窗按钮已出现（避免误判在过渡动画中）
+            if not self.wait_until_appear(
+                [CURRENCY_WAR_INVEST_POPUP_TITLE, CURRENCY_WAR_INVEST_CONFIRM],
+                timeout=8.0,
+                interval=0.2,
+                skip_first_screenshot=False,
+            ):
+                logger.warning('Investment selection popup not found')
+                return False
+
+            choose_investment_option()
+
+            if not self.click_until(
+                CURRENCY_WAR_INVEST_CONFIRM,
+                appear=CURRENCY_WAR_BATTLE_FIGHT,
+                disappear=CURRENCY_WAR_INVEST_CONFIRM,
+                timeout=15,
+                interval=0.2,
+                click_interval=1.0,
+                skip_first_screenshot=False,
+            ):
+                logger.warning('Investment confirm button not found')
+                return False
+
+            # 若很快再次出现确认按钮，说明还有下一次投资选择
+            if self.wait_until_appear(
+                [CURRENCY_WAR_BATTLE_FIGHT, CURRENCY_WAR_INVEST_CONFIRM],
+                timeout=6.0,
+                interval=0.2,
+                skip_first_screenshot=False,
+            ):
+                self.device.screenshot()
+                if self.appear(CURRENCY_WAR_BATTLE_FIGHT):
+                    return True
+                logger.info(f'Another investment selection detected ({idx + 2}/{max_investment_selections}), selecting again')
+                continue
+
+            # 无法判断进入结果，默认认为已通过投资选择
             return True
 
-        logger.warning('Investment confirm button not found')
+        logger.warning('Too many consecutive investment selections')
         return False
 
     def currency_war_leave(self):
@@ -492,6 +561,29 @@ class CurrencyWarEntry(CurrencyWarNav, CurrencyWarUI):
 
         # 6. 等待回到主界面
         self.wait_until_stable(CURRENCY_WAR_MAIN_CHECK, timeout=Timer(3))
+        self.device.screenshot()
+        if not self.appear(CURRENCY_WAR_MAIN_CHECK):
+            logger.warning('Still not on currency war main page after reward claiming, trying to close reward page')
+            closed = False
+            if self.appear(CURRENCY_WAR_REWARD_CLOSE):
+                closed = self.click_until_appear(
+                    CURRENCY_WAR_REWARD_CLOSE,
+                    CURRENCY_WAR_MAIN_CHECK,
+                    timeout=12,
+                    interval=0.2,
+                    click_interval=1.0,
+                    skip_first_screenshot=True,
+                )
+            if not closed:
+                self.click_until_appear(
+                    CLOSE,
+                    CURRENCY_WAR_MAIN_CHECK,
+                    timeout=12,
+                    interval=0.2,
+                    click_interval=1.0,
+                    skip_first_screenshot=False,
+                )
+            self.wait_until_stable(CURRENCY_WAR_MAIN_CHECK, timeout=Timer(3))
 
         # 7. OCR更新后的点数
         self.device.screenshot()

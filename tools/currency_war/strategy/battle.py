@@ -123,17 +123,52 @@ class CurrencyWarBattle(CurrencyWarUI):
             logger.error('Investment popup not found')
             raise CurrencyWarBattleTimeout
 
-        choose_investment_option()
+        # 部分关卡投资环境弹窗可能连续出现多次
+        max_investment_selections = 3
+        for idx in range(max_investment_selections):
+            if not self.wait_until_appear(
+                [CURRENCY_WAR_INVEST_POPUP_TITLE, CURRENCY_WAR_INVEST_CONFIRM_BATTLE],
+                timeout=8.0,
+                interval=0.2,
+                skip_first_screenshot=False,
+            ):
+                logger.error('Investment popup not found')
+                raise CurrencyWarBattleTimeout
 
-        if not self.click_until_appear(
-            CURRENCY_WAR_INVEST_CONFIRM_BATTLE,
-            [CURRENCY_WAR_SHOP_COLLAPSE, CURRENCY_WAR_EXIT],
-            timeout=20,
-            interval=0.2,
-            click_interval=1.0,
-            skip_first_screenshot=False,
-        ):
-            logger.error('Investment confirm button not found')
+            choose_investment_option()
+
+            if not self.click_until(
+                CURRENCY_WAR_INVEST_CONFIRM_BATTLE,
+                appear=[CURRENCY_WAR_SHOP_COLLAPSE, CURRENCY_WAR_EXIT],
+                disappear=CURRENCY_WAR_INVEST_CONFIRM_BATTLE,
+                timeout=20,
+                interval=0.2,
+                click_interval=1.0,
+                skip_first_screenshot=False,
+            ):
+                logger.error('Investment confirm button not found')
+                raise CurrencyWarBattleTimeout
+
+            self.device.screenshot()
+            if self.appear(CURRENCY_WAR_SHOP_COLLAPSE) or self.appear(CURRENCY_WAR_EXIT):
+                break
+
+            # 可能还有下一次投资选择，或正处于过渡加载：两者都等待一下
+            if self.wait_until_appear(
+                [CURRENCY_WAR_SHOP_COLLAPSE, CURRENCY_WAR_EXIT, CURRENCY_WAR_INVEST_CONFIRM_BATTLE],
+                timeout=8.0,
+                interval=0.2,
+                skip_first_screenshot=False,
+            ):
+                self.device.screenshot()
+                if self.appear(CURRENCY_WAR_SHOP_COLLAPSE) or self.appear(CURRENCY_WAR_EXIT):
+                    break
+                logger.info(f'Another investment selection detected ({idx + 2}/{max_investment_selections}), selecting again')
+                continue
+
+            break
+        else:
+            logger.error('Too many consecutive investment selections')
             raise CurrencyWarBattleTimeout
 
         # 5) 收起商店界面（让退出按钮出现）

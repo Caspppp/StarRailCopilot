@@ -238,11 +238,11 @@ class CurrencyWarUI(UI):
 
         规则:
             1. 通过“空格子模板”判断备战席位是否有棋子
-            2. 若备战席位存在相同棋子，优先只选择其中1个
+            2. 若备战席位存在相同棋子，只选择其中 1 个（同名棋子无法同时上阵）
             3. 将最多 `deploy_count` 个棋子拖到前台空位（优先空位）
 
         Returns:
-            bool: 是否确保前台至少上阵 `deploy_count` 个棋子（或受限于前台格子数量）
+            bool: 是否确保前台至少上阵 `deploy_count` 个棋子；若唯一棋子不足，则以唯一棋子数量为上限
         """
         import numpy as np
 
@@ -387,10 +387,32 @@ class CurrencyWarUI(UI):
         target_total = min(deploy_count, slot_total)
 
         self.device.screenshot()
+        occupied_bench_current, _ = scan_bench_occupied()
+        if occupied_bench_current:
+            occupied_bench = occupied_bench_current
         empty_front = get_front_empty_indices()
         filled_front = slot_total - len(empty_front)
-        if filled_front >= target_total:
-            logger.info(f'Front already has {filled_front}/{target_total} pieces, skip deploy')
+        initial_filled_front = filled_front
+
+        # 去重：通过棋子截图相似度判断“同一棋子”（同名棋子无法同时上阵）
+        unique_total_lumas: list[np.ndarray] = []
+        for idx in occupied_bench:
+            x1, y1, x2, y2 = bench_slot_areas[idx]
+            inner = (x1 + 10, y1 + 10, x2 - 10, y2 - 10)
+            piece_luma = rgb2luma(self.image_crop(inner, copy=False))
+            if any(match_template(piece_luma, rep, similarity=0.88) for rep in unique_total_lumas):
+                continue
+            unique_total_lumas.append(piece_luma)
+
+        expected_total = min(target_total, initial_filled_front + len(unique_total_lumas))
+        if expected_total < target_total:
+            logger.info(
+                f'Bench unique pieces limited: front={initial_filled_front}, '
+                f'bench_unique={len(unique_total_lumas)}, target={target_total} -> expected={expected_total}'
+            )
+
+        if filled_front >= expected_total:
+            logger.info(f'Front already has {filled_front}/{expected_total} pieces, skip deploy')
             return True
 
         # 多轮尝试：处理“落子延迟/拖动失败”导致的空位遗漏
@@ -400,7 +422,7 @@ class CurrencyWarUI(UI):
 
             empty_front = get_front_empty_indices()
             filled_front = slot_total - len(empty_front)
-            need = max(0, target_total - filled_front)
+            need = max(0, expected_total - filled_front)
 
             if need <= 0:
                 break
@@ -416,7 +438,7 @@ class CurrencyWarUI(UI):
                 inner = (x1 + 10, y1 + 10, x2 - 10, y2 - 10)
                 piece_luma = rgb2luma(self.image_crop(inner, copy=False))
 
-                if any(match_template(piece_luma, rep, similarity=0.9) for rep in unique_lumas):
+                if any(match_template(piece_luma, rep, similarity=0.88) for rep in unique_lumas):
                     continue
 
                 unique_bench.append(idx)
@@ -424,15 +446,8 @@ class CurrencyWarUI(UI):
                 if len(unique_bench) >= need:
                     break
 
-            # 若唯一棋子不足，补充剩余格子（允许重复）
+            # 只部署唯一棋子（同名棋子无法同时上阵）
             selected = list(unique_bench)
-            if len(selected) < need:
-                for idx in occupied_bench:
-                    if idx in selected:
-                        continue
-                    selected.append(idx)
-                    if len(selected) >= need:
-                        break
 
             if not selected:
                 break
@@ -477,8 +492,8 @@ class CurrencyWarUI(UI):
         self.device.screenshot()
         empty_front = get_front_empty_indices()
         filled_front = slot_total - len(empty_front)
-        if filled_front < target_total:
-            logger.warning(f'Deploy incomplete: {filled_front}/{target_total} pieces on front')
+        if filled_front < expected_total:
+            logger.warning(f'Deploy incomplete: {filled_front}/{expected_total} pieces on front')
             return False
 
         return True
