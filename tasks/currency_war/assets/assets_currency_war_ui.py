@@ -32,6 +32,18 @@ CURRENCY_WAR_MAIN_CHECK = ButtonWrapper(
 # 与 CURRENCY_WAR_MAIN_CHECK 相同，复用定义
 CURRENCY_WAR_START = CURRENCY_WAR_MAIN_CHECK
 
+# 结束并结算按钮（存在未完成对局时）
+CURRENCY_WAR_END_AND_SETTLE = ButtonWrapper(
+    name='CURRENCY_WAR_END_AND_SETTLE',
+    share=Button(
+        file='./assets/share/currency_war/ui/END_AND_SETTLE.png',
+        area=(790, 628, 893, 650),
+        search=(770, 608, 913, 670),
+        color=(160, 161, 162),
+        button=(790, 628, 893, 650),
+    ),
+)
+
 # 奖励指示器（红点）- 出现时表示有奖励可领取
 REWARD_INDICATOR = ButtonWrapper(
     name='REWARD_INDICATOR',
@@ -221,6 +233,18 @@ CURRENCY_WAR_INVEST_POPUP_TITLE = ButtonWrapper(
     ),
 )
 
+# 投资环境开局标题（用于开局时的投资环境选择页面检测）
+CURRENCY_WAR_INVEST_TITLE_START = ButtonWrapper(
+    name='CURRENCY_WAR_INVEST_TITLE_START',
+    share=Button(
+        file='./assets/share/currency_war/ui/INVEST_TITLE_START.png',
+        area=(555, 50, 725, 79),
+        search=(535, 30, 745, 99),
+        color=(200, 200, 210),
+        button=(555, 50, 725, 79),
+    ),
+)
+
 # 商店收起按钮（收起商店界面，露出退出按钮）
 CURRENCY_WAR_SHOP_COLLAPSE = ButtonWrapper(
     name='CURRENCY_WAR_SHOP_COLLAPSE',
@@ -254,6 +278,18 @@ CURRENCY_WAR_GIVE_UP_AND_SETTLE = ButtonWrapper(
         search=(411, 498, 552, 560),
         color=(160, 160, 160),
         button=(431, 518, 532, 540),
+    ),
+)
+
+# 放弃并结算按钮（结束并结算后的确认页）
+CURRENCY_WAR_GIVE_UP_AND_SETTLE_CONFIRM = ButtonWrapper(
+    name='CURRENCY_WAR_GIVE_UP_AND_SETTLE_CONFIRM',
+    share=Button(
+        file='./assets/share/currency_war/ui/GIVE_UP_AND_SETTLE_CONFIRM.png',
+        area=(604, 520, 706, 540),
+        search=(584, 500, 726, 560),
+        color=(154, 154, 154),
+        button=(604, 520, 706, 540),
     ),
 )
 

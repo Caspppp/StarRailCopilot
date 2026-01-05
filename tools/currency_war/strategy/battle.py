@@ -72,8 +72,8 @@ class CurrencyWarBattle(CurrencyWarUI):
                         break
 
             if not chosen:
-                logger.info('No undiscovered investment option found, choosing option 1')
-                self.device.click(options[0][0])
+                logger.info('No undiscovered investment option found, choosing option 2 (middle)')
+                self.device.click(options[1][0])
 
         # 1) 将备战席位棋子拖到前台区域（并确保上阵完成）
         deploy_timeout = Timer(25).start()
@@ -114,7 +114,7 @@ class CurrencyWarBattle(CurrencyWarUI):
         # 3) 继续挑战 → 等待投资环境弹窗出现
         if not self.click_until_appear(
             CURRENCY_WAR_CONTINUE_CHALLENGE,
-            [CURRENCY_WAR_INVEST_POPUP_TITLE, CURRENCY_WAR_INVEST_CONFIRM_BATTLE],
+            [CURRENCY_WAR_INVEST_POPUP_TITLE, CURRENCY_WAR_INVEST_CONFIRM_BATTLE, CURRENCY_WAR_INVEST_CONFIRM],
             timeout=30,
             interval=0.3,
             click_interval=1.0,
@@ -124,10 +124,11 @@ class CurrencyWarBattle(CurrencyWarUI):
             raise CurrencyWarBattleTimeout
 
         # 部分关卡投资环境弹窗可能连续出现多次
+        confirm_buttons = [CURRENCY_WAR_INVEST_CONFIRM_BATTLE, CURRENCY_WAR_INVEST_CONFIRM]
         max_investment_selections = 3
         for idx in range(max_investment_selections):
             if not self.wait_until_appear(
-                [CURRENCY_WAR_INVEST_POPUP_TITLE, CURRENCY_WAR_INVEST_CONFIRM_BATTLE],
+                [CURRENCY_WAR_INVEST_POPUP_TITLE, *confirm_buttons],
                 timeout=8.0,
                 interval=0.2,
                 skip_first_screenshot=False,
@@ -137,26 +138,37 @@ class CurrencyWarBattle(CurrencyWarUI):
 
             choose_investment_option()
 
-            if not self.click_until(
-                CURRENCY_WAR_INVEST_CONFIRM_BATTLE,
-                appear=[CURRENCY_WAR_SHOP_COLLAPSE, CURRENCY_WAR_EXIT],
-                disappear=CURRENCY_WAR_INVEST_CONFIRM_BATTLE,
-                timeout=20,
+            # 部分投资选择无“确认”按钮，会直接跳到下一页；因此只在确认按钮出现时才点击
+            if self.wait_until_appear(
+                confirm_buttons,
+                timeout=4.0,
                 interval=0.2,
-                click_interval=1.0,
                 skip_first_screenshot=False,
             ):
-                logger.error('Investment confirm button not found')
-                raise CurrencyWarBattleTimeout
+                self.device.screenshot()
+                confirm_btn = (
+                    CURRENCY_WAR_INVEST_CONFIRM_BATTLE
+                    if self.appear(CURRENCY_WAR_INVEST_CONFIRM_BATTLE)
+                    else CURRENCY_WAR_INVEST_CONFIRM
+                )
+                if not self.click_until(
+                    confirm_btn,
+                    appear=[CURRENCY_WAR_SHOP_COLLAPSE, CURRENCY_WAR_EXIT],
+                    disappear=confirm_btn,
+                    timeout=20,
+                    interval=0.2,
+                    click_interval=1.0,
+                    skip_first_screenshot=False,
+                ):
+                    logger.error('Investment confirm button not found')
+                    raise CurrencyWarBattleTimeout
+            else:
+                logger.info('Investment confirm button not found, maybe auto-advance')
 
-            self.device.screenshot()
-            if self.appear(CURRENCY_WAR_SHOP_COLLAPSE) or self.appear(CURRENCY_WAR_EXIT):
-                break
-
-            # 可能还有下一次投资选择，或正处于过渡加载：两者都等待一下
+            # 等待进入商店/退出按钮出现，或出现下一次投资选择（弹窗可能延迟出现）
             if self.wait_until_appear(
-                [CURRENCY_WAR_SHOP_COLLAPSE, CURRENCY_WAR_EXIT, CURRENCY_WAR_INVEST_CONFIRM_BATTLE],
-                timeout=8.0,
+                [CURRENCY_WAR_SHOP_COLLAPSE, CURRENCY_WAR_EXIT, *confirm_buttons],
+                timeout=20.0,
                 interval=0.2,
                 skip_first_screenshot=False,
             ):
@@ -164,6 +176,11 @@ class CurrencyWarBattle(CurrencyWarUI):
                 if self.appear(CURRENCY_WAR_SHOP_COLLAPSE) or self.appear(CURRENCY_WAR_EXIT):
                     break
                 logger.info(f'Another investment selection detected ({idx + 2}/{max_investment_selections}), selecting again')
+                continue
+
+            self.device.screenshot()
+            if self.appear(CURRENCY_WAR_INVEST_POPUP_TITLE, similarity=0.8):
+                logger.info('Investment selection still present after waiting, retrying')
                 continue
 
             break

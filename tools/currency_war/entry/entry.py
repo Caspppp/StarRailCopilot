@@ -27,8 +27,7 @@ class CurrencyWarEntry(CurrencyWarNav, CurrencyWarUI):
         2. 周常点数过期 → 重置点数，继续运行
         3. 周常点数已满：
            a. WeeklyFarming=True → 继续刷材料
-           b. UseImmersifier=True 且有沉浸器 → 继续使用沉浸器
-           c. 否则 → 抛出异常，停止任务
+           b. 否则 → 抛出异常，停止任务
         """
         logger.info(f'CurrencyWarWorld_UseImmersifier={self.config.CurrencyWarWorld_UseImmersifier}')
         logger.info(f'CurrencyWarWorld_WeeklyFarming={self.config.CurrencyWarWorld_WeeklyFarming}')
@@ -51,12 +50,6 @@ class CurrencyWarEntry(CurrencyWarNav, CurrencyWarUI):
             if self.config.CurrencyWarWorld_WeeklyFarming:
                 logger.info('WeeklyFarming enabled, continue to farm materials')
                 return
-
-            if self.config.CurrencyWarWorld_UseImmersifier:
-                immersifier = self.config.stored.Immersifier
-                if immersifier.value > 0:
-                    logger.info(f'Has {immersifier.value} immersifiers, continue')
-                    return
 
             raise CurrencyWarReachedWeeklyPointLimit
 
@@ -156,10 +149,15 @@ class CurrencyWarEntry(CurrencyWarNav, CurrencyWarUI):
         """
         from module.base.timer import Timer
         from tasks.currency_war.assets.assets_currency_war_ui import (
+            CURRENCY_WAR_END_AND_SETTLE,
+            CURRENCY_WAR_GIVE_UP_AND_SETTLE_CONFIRM,
+            CURRENCY_WAR_RETURN_TO_CURRENCY_WAR,
             CURRENCY_WAR_START,
             CURRENCY_WAR_MAIN_CHECK,
             CURRENCY_WAR_OVERCLOCK_MODE,
             CURRENCY_WAR_OVERCLOCK_ENTER,
+            CURRENCY_WAR_SETTLE_NEXT,
+            CURRENCY_WAR_SETTLE_NEXT_PAGE,
         )
 
         logger.hr('Currency War Start', level=2)
@@ -178,6 +176,25 @@ class CurrencyWarEntry(CurrencyWarNav, CurrencyWarUI):
             if self.appear(CURRENCY_WAR_OVERCLOCK_MODE) or self.appear(CURRENCY_WAR_OVERCLOCK_ENTER):
                 logger.info('Arrived at currency war mode selection')
                 return True
+
+            # 存在未完成对局：结束并结算 → 放弃并结算 → 回到主界面再重新开始
+            unfinished_match_ui = (
+                self.appear(CURRENCY_WAR_END_AND_SETTLE)
+                or self.appear(CURRENCY_WAR_GIVE_UP_AND_SETTLE_CONFIRM)
+                or self.appear(CURRENCY_WAR_SETTLE_NEXT)
+                or self.appear(CURRENCY_WAR_SETTLE_NEXT_PAGE)
+                or self.appear(CURRENCY_WAR_RETURN_TO_CURRENCY_WAR)
+            )
+            if unfinished_match_ui:
+                logger.info('Detected unfinished currency war match, settling first')
+                if self.currency_war_abandon_and_settle_unfinished_match(skip_first_screenshot=True):
+                    timeout.reset()
+                    clicked = False
+                    self.interval_clear(CURRENCY_WAR_START)
+                    skip_first_screenshot = True
+                    continue
+                logger.warning('Unfinished match detected but failed to settle')
+                continue
 
             # 已离开主界面
             if not self.appear(CURRENCY_WAR_MAIN_CHECK):
@@ -208,6 +225,102 @@ class CurrencyWarEntry(CurrencyWarNav, CurrencyWarUI):
             logger.warning('Start button not found on currency war main page')
 
         return False
+
+    def currency_war_abandon_and_settle_unfinished_match(self, skip_first_screenshot: bool = True) -> bool:
+        """
+        处理未完成对局：
+            1) 点击“结束并结算”
+            2) 点击“放弃并结算”
+            3) 挑战失败结算页：下一步 → 下一页 → 返回货币战争 → 回到主界面
+
+        Returns:
+            bool: 是否成功回到货币战争主界面
+        """
+        from module.base.timer import Timer
+        from tasks.currency_war.assets.assets_currency_war_ui import (
+            CURRENCY_WAR_END_AND_SETTLE,
+            CURRENCY_WAR_GIVE_UP_AND_SETTLE_CONFIRM,
+            CURRENCY_WAR_MAIN_CHECK,
+            CURRENCY_WAR_RETURN_TO_CURRENCY_WAR,
+            CURRENCY_WAR_SETTLE_NEXT,
+            CURRENCY_WAR_SETTLE_NEXT_PAGE,
+        )
+
+        logger.hr('Currency War Unfinished Match', level=2)
+
+        if not skip_first_screenshot:
+            self.device.screenshot()
+
+        if self.appear(CURRENCY_WAR_END_AND_SETTLE):
+            if not self.click_until_appear(
+                CURRENCY_WAR_END_AND_SETTLE,
+                [CURRENCY_WAR_GIVE_UP_AND_SETTLE_CONFIRM, CURRENCY_WAR_SETTLE_NEXT],
+                timeout=25,
+                interval=0.2,
+                click_interval=1.0,
+                skip_first_screenshot=True,
+            ):
+                logger.warning('End and settle button not responding')
+                return False
+
+        if self.appear(CURRENCY_WAR_GIVE_UP_AND_SETTLE_CONFIRM):
+            if not self.click_until_appear(
+                CURRENCY_WAR_GIVE_UP_AND_SETTLE_CONFIRM,
+                CURRENCY_WAR_SETTLE_NEXT,
+                timeout=35,
+                interval=0.2,
+                click_interval=1.0,
+                skip_first_screenshot=True,
+            ):
+                logger.warning('Give up and settle button not responding')
+                return False
+
+        if not self.appear(CURRENCY_WAR_SETTLE_NEXT):
+            if not self.wait_until_appear(
+                CURRENCY_WAR_SETTLE_NEXT,
+                timeout=35,
+                interval=0.3,
+                skip_first_screenshot=False,
+            ):
+                logger.warning('Settle next button not found')
+                return False
+
+        if not self.click_until_appear(
+            CURRENCY_WAR_SETTLE_NEXT,
+            CURRENCY_WAR_SETTLE_NEXT_PAGE,
+            timeout=35,
+            interval=0.3,
+            click_interval=1.0,
+            skip_first_screenshot=False,
+        ):
+            logger.warning('Settle next page button not found')
+            return False
+
+        if not self.click_until_appear(
+            CURRENCY_WAR_SETTLE_NEXT_PAGE,
+            CURRENCY_WAR_RETURN_TO_CURRENCY_WAR,
+            timeout=35,
+            interval=0.3,
+            click_interval=1.0,
+            skip_first_screenshot=False,
+        ):
+            logger.warning('Return to currency war button not found')
+            return False
+
+        if not self.click_until_appear(
+            CURRENCY_WAR_RETURN_TO_CURRENCY_WAR,
+            CURRENCY_WAR_MAIN_CHECK,
+            timeout=35,
+            interval=0.3,
+            click_interval=1.0,
+            skip_first_screenshot=False,
+        ):
+            logger.warning('Main page not found after settle')
+            return False
+
+        self.wait_until_stable(CURRENCY_WAR_MAIN_CHECK, timeout=Timer(10))
+        logger.info('Returned to currency war main page (unfinished match settled)')
+        return True
 
     def currency_war_overclock_enter(self, skip_first_screenshot=True) -> bool:
         """
@@ -288,7 +401,9 @@ class CurrencyWarEntry(CurrencyWarNav, CurrencyWarUI):
             CURRENCY_WAR_OVERCLOCK_START_BATTLE,
             CURRENCY_WAR_OVERCLOCK_NEXT,
             CURRENCY_WAR_INVEST_POPUP_TITLE,
+            CURRENCY_WAR_INVEST_TITLE_START,
             CURRENCY_WAR_INVEST_CONFIRM,
+            CURRENCY_WAR_INVEST_CONFIRM_BATTLE,
             CURRENCY_WAR_INVEST_UNDISCOVERED_OPTION_1,
             CURRENCY_WAR_INVEST_UNDISCOVERED_OPTION_2,
             CURRENCY_WAR_INVEST_UNDISCOVERED_OPTION_3,
@@ -299,14 +414,17 @@ class CurrencyWarEntry(CurrencyWarNav, CurrencyWarUI):
             CURRENCY_WAR_OVERCLOCK_START_BATTLE,
             CURRENCY_WAR_OVERCLOCK_NEXT,
             CURRENCY_WAR_INVEST_CONFIRM,
+            CURRENCY_WAR_INVEST_CONFIRM_BATTLE,
         ])
+
+        confirm_buttons = [CURRENCY_WAR_INVEST_CONFIRM, CURRENCY_WAR_INVEST_CONFIRM_BATTLE]
 
         def click_blank_to_continue():
             # 避免点击屏幕中间（可能误点投资选项）
             blank = ClickButton(area=(20, 340, 80, 400), name='CURRENCY_WAR_BLANK_CONTINUE')
             self.device.click(blank)
             self.wait_until_appear(
-                [CURRENCY_WAR_INVEST_CONFIRM, CURRENCY_WAR_OVERCLOCK_NEXT],
+                [*confirm_buttons, CURRENCY_WAR_OVERCLOCK_NEXT],
                 timeout=1.2,
                 interval=0.2,
                 skip_first_screenshot=False,
@@ -333,8 +451,13 @@ class CurrencyWarEntry(CurrencyWarNav, CurrencyWarUI):
             if self.handle_popup_single():
                 continue
 
-            # 已进入投资环境选择页：无需再点“空白继续”
-            if self.appear(CURRENCY_WAR_INVEST_POPUP_TITLE, similarity=0.8) or self.appear(CURRENCY_WAR_INVEST_CONFIRM):
+            # 已进入投资环境选择页：无需再点"空白继续"
+            # 检测开局标题（投资环境）或战斗后标题（请选择投资策略）或确认按钮
+            if (self.appear(CURRENCY_WAR_INVEST_TITLE_START, similarity=0.8) or
+                self.appear(CURRENCY_WAR_INVEST_POPUP_TITLE, similarity=0.8) or
+                self.appear(CURRENCY_WAR_INVEST_CONFIRM) or
+                self.appear(CURRENCY_WAR_INVEST_CONFIRM_BATTLE)):
+                logger.info('Investment selection page detected')
                 break
 
             # 优先点“下一步”，否则点空白处继续
@@ -374,15 +497,16 @@ class CurrencyWarEntry(CurrencyWarNav, CurrencyWarUI):
                         break
 
             if not chosen:
-                logger.info('No undiscovered investment option found, choosing option 1')
-                self.device.click(options[0][0])
+                logger.info('No undiscovered investment option found, choosing option 2 (middle)')
+                self.device.click(options[1][0])
 
         # 6. 投资环境选择可能会连续出现多次（部分关卡会额外多出一次选择）
         max_investment_selections = 3
         for idx in range(max_investment_selections):
             # 确保弹窗按钮已出现（避免误判在过渡动画中）
+            # 检测三种可能的界面标识：开局标题、战斗后标题、确认按钮
             if not self.wait_until_appear(
-                [CURRENCY_WAR_INVEST_POPUP_TITLE, CURRENCY_WAR_INVEST_CONFIRM],
+                [CURRENCY_WAR_INVEST_TITLE_START, CURRENCY_WAR_INVEST_POPUP_TITLE, *confirm_buttons],
                 timeout=8.0,
                 interval=0.2,
                 skip_first_screenshot=False,
@@ -392,22 +516,37 @@ class CurrencyWarEntry(CurrencyWarNav, CurrencyWarUI):
 
             choose_investment_option()
 
-            if not self.click_until(
-                CURRENCY_WAR_INVEST_CONFIRM,
-                appear=CURRENCY_WAR_BATTLE_FIGHT,
-                disappear=CURRENCY_WAR_INVEST_CONFIRM,
-                timeout=15,
+            # 部分投资选择无“确认”按钮，会直接跳到下一页；因此只在确认按钮出现时才点击
+            if self.wait_until_appear(
+                confirm_buttons,
+                timeout=4.0,
                 interval=0.2,
-                click_interval=1.0,
                 skip_first_screenshot=False,
             ):
-                logger.warning('Investment confirm button not found')
-                return False
+                self.device.screenshot()
+                confirm_btn = (
+                    CURRENCY_WAR_INVEST_CONFIRM_BATTLE
+                    if self.appear(CURRENCY_WAR_INVEST_CONFIRM_BATTLE)
+                    else CURRENCY_WAR_INVEST_CONFIRM
+                )
+                if not self.click_until(
+                    confirm_btn,
+                    appear=CURRENCY_WAR_BATTLE_FIGHT,
+                    disappear=confirm_btn,
+                    timeout=15,
+                    interval=0.2,
+                    click_interval=1.0,
+                    skip_first_screenshot=False,
+                ):
+                    logger.warning('Investment confirm button not found')
+                    return False
+            else:
+                logger.info('Investment confirm button not found, maybe auto-advance')
 
-            # 若很快再次出现确认按钮，说明还有下一次投资选择
+            # 等待进入战斗界面，或出现下一次投资选择（第二次弹窗可能延迟出现）
             if self.wait_until_appear(
-                [CURRENCY_WAR_BATTLE_FIGHT, CURRENCY_WAR_INVEST_CONFIRM],
-                timeout=6.0,
+                [CURRENCY_WAR_BATTLE_FIGHT, *confirm_buttons],
+                timeout=20.0,
                 interval=0.2,
                 skip_first_screenshot=False,
             ):
@@ -418,6 +557,13 @@ class CurrencyWarEntry(CurrencyWarNav, CurrencyWarUI):
                 continue
 
             # 无法判断进入结果，默认认为已通过投资选择
+            self.device.screenshot()
+            if (self.appear(CURRENCY_WAR_INVEST_TITLE_START, similarity=0.8) or
+                self.appear(CURRENCY_WAR_INVEST_POPUP_TITLE, similarity=0.8)):
+                logger.info('Investment selection still present after waiting, retrying')
+                continue
+
+            logger.info('Investment selection result unclear, assuming entered game')
             return True
 
         logger.warning('Too many consecutive investment selections')
