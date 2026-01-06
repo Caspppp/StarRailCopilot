@@ -78,9 +78,16 @@ class TreasuresLightwardNavigator:
             logger.error("Failed to select Pure Fiction nav")
             return False
 
-        if not self.click_teleport_to_enter(device):
+        # 版本更新后可能出现“开启故事”弹窗，需要先点击确认
+        self.handle_pure_fiction_start_story(device)
+
+        # 虚构叙事进入选关需要点击一次独立传送按钮
+        if not self.click_teleport_to_enter(device, teleport_template_key="nav/pure_fiction_teleport"):
             logger.error("Failed to click teleport button")
             return False
+
+        # 少数情况下弹窗会在传送后出现，再处理一次
+        self.handle_pure_fiction_start_story(device)
 
         logger.info("Successfully navigated to Pure Fiction interior")
         return True
@@ -108,7 +115,38 @@ class TreasuresLightwardNavigator:
         logger.info("Successfully navigated to Apocalyptic Shadow interior")
         return True
 
-    def click_teleport_to_enter(self, device) -> bool:
+    def handle_pure_fiction_start_story(self, device) -> bool:
+        """
+        处理虚构叙事“开启故事”弹窗（可能在版本更新后首次进入出现）。
+
+        Returns:
+            bool: 是否点击过“开启故事”
+        """
+        template_key = "nav/pure_fiction_start_story"
+        template = self.templates.get_template(template_key)
+        area = self.templates.get_button_area(template_key)
+        if template is None or area is None:
+            return False
+
+        for attempt in range(1, config.MAX_NAV_RETRY + 1):
+            device.screenshot()
+            pos = self._find_template(
+                device.image,
+                template,
+                area,
+                threshold=config.TEMPLATE_MATCH_THRESHOLD_CLICK,
+            )
+            if pos is None:
+                return False
+
+            logger.info(f"Pure Fiction start story detected, clicking (attempt {attempt}/{config.MAX_NAV_RETRY})")
+            self._click_position(device, pos)
+            self._wait_for_screen_stable(device, timeout=3.0, check_interval=0.3)
+            time.sleep(0.8)
+
+        return True
+
+    def click_teleport_to_enter(self, device, teleport_template_key: str | None = None) -> bool:
         """
         点击传送按钮进入忘却之庭内部页面
 
@@ -118,14 +156,46 @@ class TreasuresLightwardNavigator:
         Returns:
             bool: 是否成功点击传送按钮并进入
         """
-        logger.info("Clicking teleport button to enter Forgotten Hall...")
+        logger.info("Clicking teleport button to enter...")
 
-        # 传送按钮固定位置（基于1280x720分辨率）
-        # 来源：tasks/forgotten_hall/assets/assets_forgotten_hall_ui.py TELEPORT定义
-        teleport_button_center = (1028, 365)  # button=(1018, 355, 1038, 375)的中心
+        default_teleport_center = (1028, 365)  # Forgotten Hall default teleport center
+        fallback_teleport_centers = {
+            # User-provided Pure Fiction teleport button area center: (1070, 445, 1107, 465)
+            "nav/pure_fiction_teleport": (1088, 455),
+        }
 
-        # 点击传送按钮
-        self._click_position(device, teleport_button_center)
+        if teleport_template_key:
+            template = self.templates.get_template(teleport_template_key)
+            area = self.templates.get_button_area(teleport_template_key)
+            fallback_center = fallback_teleport_centers.get(teleport_template_key, default_teleport_center)
+
+            if template is None or area is None:
+                logger.warning(f"Teleport template not loaded: {teleport_template_key}, fallback click")
+                self._click_position(device, fallback_center)
+            else:
+                clicked = False
+                for attempt in range(1, config.MAX_NAV_RETRY + 1):
+                    logger.info(f"Teleport click attempt {attempt}/{config.MAX_NAV_RETRY}")
+                    device.screenshot()
+                    pos = self._find_template(
+                        device.image,
+                        template,
+                        area,
+                        threshold=config.TEMPLATE_MATCH_THRESHOLD_CLICK,
+                    )
+                    if pos is None:
+                        time.sleep(config.RETRY_WAIT_INTERVAL)
+                        continue
+
+                    self._click_position(device, pos)
+                    clicked = True
+                    break
+
+                if not clicked:
+                    logger.warning("Teleport template matching failed, fallback click")
+                    self._click_position(device, fallback_center)
+        else:
+            self._click_position(device, default_teleport_center)
 
         # 等待画面稳定（页面切换动画完成）
         logger.info("Waiting for screen to stabilize after teleport...")

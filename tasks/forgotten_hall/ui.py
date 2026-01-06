@@ -626,6 +626,253 @@ STAGE_LIST = DraggableStageList("ForgottenHallStageList", keyword_class=Forgotte
 
 
 class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
+    PURE_FICTION_DETECTION_AREA = (505, 187, 1214, 568)
+    PURE_FICTION_STAGE_STAR_AREAS: dict[int, tuple[int, int, int, int]] = {
+        1: (548, 418, 622, 445),
+        2: (802, 223, 903, 258),
+        3: (931, 538, 1023, 574),
+        4: (1135, 351, 1227, 387),
+    }
+    PURE_FICTION_STAGE_LOCKED_TEXT_AREAS: dict[int, tuple[int, int, int, int]] = {
+        2: (827, 224, 895, 253),
+        3: (954, 539, 1022, 568),
+        4: (1158, 353, 1226, 382),
+    }
+
+    APOCALYPTIC_SHADOW_STAGE_BUTTON_AREA = (177, 626, 1102, 662)
+    APOCALYPTIC_SHADOW_STAGE_COUNT = 4
+
+    @staticmethod
+    def _area_center(area: tuple[int, int, int, int]) -> tuple[int, int]:
+        x1, y1, x2, y2 = area
+        return ((x1 + x2) // 2, (y1 + y2) // 2)
+
+    @staticmethod
+    def _point_in_area(point: tuple[int, int], area: tuple[int, int, int, int]) -> bool:
+        x, y = point
+        x1, y1, x2, y2 = area
+        return x1 <= x <= x2 and y1 <= y <= y2
+
+    @staticmethod
+    def _split_area_horizontally(area: tuple[int, int, int, int], segments: int) -> list[tuple[int, int, int, int]]:
+        x1, y1, x2, y2 = area
+        if segments <= 0:
+            return []
+
+        total_w = x2 - x1
+        base_w = total_w // segments
+        remainder = total_w % segments
+
+        areas: list[tuple[int, int, int, int]] = []
+        cur_x = x1
+        for i in range(segments):
+            seg_w = base_w + (1 if i < remainder else 0)
+            seg_x1 = cur_x
+            seg_x2 = cur_x + seg_w
+            areas.append((seg_x1, y1, seg_x2, y2))
+            cur_x = seg_x2
+        return areas
+
+    def pure_fiction_scan_stage_stars(self, image=None) -> dict[int, int]:
+        """
+        扫描虚构叙事（Pure Fiction）固定页面的四关黄星数量。
+
+        仅在给定区域内检测黄星，并按每关固定星星区域统计。
+        """
+        from tools.forgotten_hall_star_detector.star_detector import detect_yellow_stars
+
+        if image is None:
+            self.device.screenshot()
+            image = self.device.image
+
+        star_regions = detect_yellow_stars(image, search_area=self.PURE_FICTION_DETECTION_AREA)
+        stage_stars: dict[int, int] = {}
+
+        for stage_num, area in self.PURE_FICTION_STAGE_STAR_AREAS.items():
+            count = 0
+            for star in star_regions:
+                center = star.get('center')
+                if center and self._point_in_area(center, area):
+                    count += 1
+            stage_stars[stage_num] = min(count, 3)
+
+        logger.info(f'[PureFiction] Stage stars: {stage_stars}')
+        return stage_stars
+
+    def pure_fiction_detect_locked_stages(self, image=None) -> set[int]:
+        """
+        检测虚构叙事各关卡是否显示“未解锁”（固定坐标）。
+
+        Returns:
+            set[int]: 被检测为锁定的关卡编号集合（2-4）
+        """
+        from module.ocr.models import TextSystem
+
+        if image is None:
+            self.device.screenshot()
+            image = self.device.image
+
+        ocr_model = TextSystem('zhs')
+        locked: set[int] = set()
+        for stage_num, area in self.PURE_FICTION_STAGE_LOCKED_TEXT_AREAS.items():
+            if detect_unlocked_text(
+                image,
+                area,
+                ocr_model=ocr_model,
+                save_debug=logger_debug,
+                debug_index=stage_num,
+            ):
+                locked.add(stage_num)
+
+        if locked:
+            logger.info(f'[PureFiction] Locked stages: {sorted(locked)}')
+        return locked
+
+    def pure_fiction_resolve_stage_num(self, prefer_stage_num: int, image=None) -> int:
+        """
+        从 prefer_stage_num 开始向下回退，返回当前可挑战的最高关卡编号（4→3→2→1）。
+        """
+        prefer_stage_num = int(prefer_stage_num)
+        prefer_stage_num = min(max(prefer_stage_num, 1), 4)
+
+        locked = self.pure_fiction_detect_locked_stages(image=image)
+        for stage_num in range(prefer_stage_num, 1, -1):
+            if stage_num not in locked:
+                return stage_num
+        return 1
+
+    def pure_fiction_next_stage_to_challenge(self, image=None) -> tuple[int, dict[int, int]]:
+        """
+        选择虚构叙事下一关要挑战的关卡。
+
+        规则（最高可挑战难度）：
+        - 优先挑战第4关；若检测到“未解锁”，则回退到第3关
+        - 依次类推回退到第2关/第1关
+        """
+        if image is None:
+            self.device.screenshot()
+            image = self.device.image
+
+        stage_stars = self.pure_fiction_scan_stage_stars(image=image)
+        locked = self.pure_fiction_detect_locked_stages(image=image)
+        for stage_num in locked:
+            stage_stars[stage_num] = -1
+
+        if stage_stars.get(4, 0) > 0:
+            return -1, stage_stars
+
+        stage_num = self.pure_fiction_resolve_stage_num(4, image=image)
+        return stage_num, stage_stars
+
+    def pure_fiction_get_stage_star_count(self, stage_num: int, image=None) -> int:
+        stage_stars = self.pure_fiction_scan_stage_stars(image=image)
+        return stage_stars.get(stage_num, 0)
+
+    def pure_fiction_select_stage(self, stage_num: int, skip_first_screenshot=True, timeout: float = 8.0) -> bool:
+        """
+        在虚构叙事固定页面点击指定关卡。
+
+        当前使用每关星星区域中心点作为点击坐标，并等待 ENTRANCE_CHECKED。
+        """
+        from module.base.button import ClickButton
+
+        if stage_num not in self.PURE_FICTION_STAGE_STAR_AREAS:
+            logger.error(f'[PureFiction] Invalid stage: {stage_num}')
+            return False
+
+        x, y = self._area_center(self.PURE_FICTION_STAGE_STAR_AREAS[stage_num])
+        click_button = ClickButton(
+            area=(x - 4, y - 4, x + 4, y + 4),
+            name=f'PureFictionStage_{stage_num}',
+        )
+
+        for attempt in range(1, 4):
+            logger.info(f'[PureFiction] Select stage {stage_num} (attempt {attempt}/3)')
+
+            if skip_first_screenshot:
+                skip_first_screenshot = False
+            else:
+                self.device.screenshot()
+
+            if self.handle_forgotten_hall_buff():
+                continue
+
+            self.device.click(click_button)
+
+            wait = Timer(timeout).start()
+            while not wait.reached():
+                self.device.screenshot()
+                if self.handle_forgotten_hall_buff():
+                    continue
+                if self.appear(ENTRANCE_CHECKED, interval=0.2):
+                    logger.info(f'[PureFiction] Stage {stage_num} selected')
+                    return True
+
+        logger.error(f'[PureFiction] Failed to select stage {stage_num}')
+        return False
+
+    def apocalyptic_shadow_get_stage_button_areas(self) -> dict[int, tuple[int, int, int, int]]:
+        """
+        末日幻影（Apocalyptic Shadow）底部 1-4 关按钮区域划分。
+
+        用户给定总区域：area=(177, 626, 1102, 662)
+        该区域按水平均分为 4 段，分别对应 1-4 关。
+        """
+        raw_areas = self._split_area_horizontally(
+            self.APOCALYPTIC_SHADOW_STAGE_BUTTON_AREA,
+            self.APOCALYPTIC_SHADOW_STAGE_COUNT,
+        )
+        areas: dict[int, tuple[int, int, int, int]] = {}
+        for idx, (x1, y1, x2, y2) in enumerate(raw_areas, start=1):
+            pad_x = min(8, max(0, (x2 - x1) // 6))
+            pad_y = min(4, max(0, (y2 - y1) // 6))
+            areas[idx] = (x1 + pad_x, y1 + pad_y, x2 - pad_x, y2 - pad_y)
+        return areas
+
+    def apocalyptic_shadow_select_stage(self, stage_num: int, skip_first_screenshot=True, timeout: float = 8.0) -> bool:
+        """
+        在末日幻影选关界面点击指定关卡（1-4）。
+
+        使用底部按钮区域中心点作为点击坐标，并等待 ENTRANCE_CHECKED。
+        """
+        from module.base.button import ClickButton
+
+        areas = self.apocalyptic_shadow_get_stage_button_areas()
+        if stage_num not in areas:
+            logger.error(f'[ApocalypticShadow] Invalid stage: {stage_num}')
+            return False
+
+        x, y = self._area_center(areas[stage_num])
+        click_button = ClickButton(
+            area=(x - 4, y - 4, x + 4, y + 4),
+            name=f'ApocalypticShadowStage_{stage_num}',
+        )
+
+        for attempt in range(1, 4):
+            logger.info(f'[ApocalypticShadow] Select stage {stage_num} (attempt {attempt}/3)')
+
+            if skip_first_screenshot:
+                skip_first_screenshot = False
+            else:
+                self.device.screenshot()
+
+            if self.handle_forgotten_hall_buff():
+                continue
+
+            self.device.click(click_button)
+
+            wait = Timer(timeout).start()
+            while not wait.reached():
+                self.device.screenshot()
+                if self.handle_forgotten_hall_buff():
+                    continue
+                if self.appear(ENTRANCE_CHECKED, interval=0.2):
+                    logger.info(f'[ApocalypticShadow] Stage {stage_num} selected')
+                    return True
+
+        logger.error(f'[ApocalypticShadow] Failed to select stage {stage_num}')
+        return False
+
     def stage_choose(self, dungeon: DungeonList, skip_first_screenshot=True):
         """
         Pages:
@@ -721,6 +968,36 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
         logger.warning('Wait stage list loaded timeout')
         return False
 
+    def _wait_for_apocalyptic_shadow_loaded(self, timeout: float = 20.0, skip_first_screenshot=True) -> bool:
+        """
+        等待末日幻影选关界面加载完成（通过“前往挑战”按钮判断）。
+
+        Returns:
+            bool: 是否在超时内加载成功
+        """
+        from tasks.forgotten_hall.assets.assets_apocalyptic_shadow_ui import APOCALYPTIC_SHADOW_GOTO_CHALLENGE
+
+        timeout_timer = Timer(timeout).start()
+        while not timeout_timer.reached():
+            if skip_first_screenshot:
+                skip_first_screenshot = False
+            else:
+                self.device.screenshot()
+
+            if self.handle_forgotten_hall_buff():
+                continue
+
+            if self.appear_then_click(TELEPORT, interval=2):
+                continue
+
+            if self.match_template_color(APOCALYPTIC_SHADOW_GOTO_CHALLENGE, interval=0.5):
+                return True
+
+            self.device.sleep(0.3)
+
+        logger.warning('Wait apocalyptic shadow loaded timeout')
+        return False
+
     def goto_stage_selection_by_dungeon_type(self, dungeon_type: str) -> bool:
         """
         根据配置中的 DungeonType/DungeonTypes 导航到对应模式的关卡选择界面
@@ -746,6 +1023,17 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
                 if not navigator.goto_apocalyptic_shadow_from_guide(self.device):
                     logger.error('Failed to navigate to Apocalyptic Shadow via Treasures Lightward')
                     return False
+
+            if dungeon_type == 'Pure_Fiction':
+                # 虚构叙事为固定页面，不依赖 STAGE_LIST OCR
+                self.device.sleep(1.0)
+                return True
+
+            if dungeon_type == 'Apocalyptic_Shadow':
+                if not self._wait_for_apocalyptic_shadow_loaded(timeout=20.0, skip_first_screenshot=True):
+                    logger.error('Failed to load apocalyptic shadow stage selection after navigation')
+                    return False
+                return True
 
             if not self._wait_for_stage_list_loaded(timeout=20.0, skip_first_screenshot=True):
                 logger.error('Failed to load stage list after navigation')
@@ -784,8 +1072,19 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
             if not self.goto_stage_selection_by_dungeon_type(dungeon_type):
                 return False
 
-            logger.info(f'Stage list select: {stage_keyword}')
-            STAGE_LIST.select_row(stage_keyword, main=self)
+            if dungeon_type == 'Pure_Fiction':
+                stage_num = self.pure_fiction_resolve_stage_num(stage_keyword.id)
+                logger.info(f'[PureFiction] Select stage: {stage_num}')
+                if not self.pure_fiction_select_stage(stage_num):
+                    return False
+            elif dungeon_type == 'Apocalyptic_Shadow':
+                stage_num = stage_keyword.id
+                logger.info(f'[ApocalypticShadow] Select stage: {stage_num}')
+                if not self.apocalyptic_shadow_select_stage(stage_num):
+                    return False
+            else:
+                logger.info(f'Stage list select: {stage_keyword}')
+                STAGE_LIST.select_row(stage_keyword, main=self)
 
             if team1_preset or team2_preset:
                 logger.hr('Configure preset teams', level=1)
@@ -1896,7 +2195,12 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
         logger.info(f'Scan complete: {stage_stars}')
         return stage_stars
 
-    def detect_current_highest_stage(self, max_stage: int = 12, target_stars: int = 3) -> tuple:
+    def detect_current_highest_stage(
+        self,
+        max_stage: int = 12,
+        target_stars: int = 3,
+        dungeon_type: str | None = None,
+    ) -> tuple:
         """
         从当前可见区域检测最高可挑战关卡（不滑动）
 
@@ -1912,6 +2216,35 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
         """
         logger.hr('Detect current highest stage', level=2)
         stage_stars = {}
+
+        if dungeon_type == 'Pure_Fiction':
+            self.device.screenshot()
+            image = self.device.image
+
+            stage_stars = self.pure_fiction_scan_stage_stars(image=image)
+            locked = self.pure_fiction_detect_locked_stages(image=image)
+            for stage_num in locked:
+                stage_stars[stage_num] = -1
+
+            highest_unlocked = max(
+                (stage_num for stage_num in range(1, max_stage + 1) if stage_stars.get(stage_num, 0) != -1),
+                default=0,
+            )
+
+            logger.info(f'[PureFiction] Visible stages: {stage_stars}, Highest: {highest_unlocked}')
+
+            if highest_unlocked <= 0:
+                logger.warning('[PureFiction] No stages detected in current view')
+                return (1, stage_stars)
+
+            # 若所有可挑战的关卡都已达标，则认为完成
+            for stage_num in range(highest_unlocked, 0, -1):
+                stars = stage_stars.get(stage_num, 0)
+                if stars >= 0 and stars < target_stars:
+                    logger.info(f'[PureFiction] Starting stage: {stage_num} ({stars} stars, target: {target_stars})')
+                    return (stage_num, stage_stars)
+
+            return (-1, stage_stars)
 
         self.device.screenshot()
         STAGE_LIST.load_rows(main=self)
@@ -1962,7 +2295,7 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
                 next_stage_keyword = getattr(KEYWORDS_FORGOTTEN_HALL_STAGE, f'Stage_{next_stage}')
                 STAGE_LIST.insight_row(next_stage_keyword, main=self)
                 # 递归检测
-                return self.detect_current_highest_stage(max_stage, target_stars)
+                return self.detect_current_highest_stage(max_stage, target_stars, dungeon_type=dungeon_type)
 
         return (-1, stage_stars)
 

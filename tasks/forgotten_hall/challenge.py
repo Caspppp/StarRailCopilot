@@ -406,6 +406,10 @@ class ForgottenHallChallenge(ForgottenHallUI):
                 logger.error(f'Unknown dungeon type: {dungeon_type}')
                 return False
 
+            if dungeon_type == 'Pure_Fiction':
+                # 虚构叙事为固定页面 + 逐关解锁，不适用 STAGE_LIST OCR 的自动选关逻辑
+                return self.run_auto_pure_fiction(team1_preset=team1_preset, team2_preset=team2_preset)
+
             if min_stage < 1:
                 min_stage = 1
             if min_stage > max_stage:
@@ -532,6 +536,61 @@ class ForgottenHallChallenge(ForgottenHallUI):
             logger.exception(e)
             return False
 
+    def run_auto_pure_fiction(self, team1_preset: int, team2_preset: int) -> bool:
+        """
+        虚构叙事自动闯关（固定页面，最多 4 关）。
+
+        规则（按用户定义）：
+        - 检测第 1 关是否有黄星；无则挑战第 1 关
+        - 若前一关有黄星，则挑战后一关（最多到第 4 关）
+        - 第 4 关也有黄星则任务完成
+        """
+        dungeon_type = 'Pure_Fiction'
+        target_stars = 1
+        max_stage = self._get_max_stage(dungeon_type) or 4
+
+        logger.hr('Auto Stage Selection Mode: Pure Fiction', level=1)
+        logger.info(f'Dungeon: {self._get_dungeon_display_name(dungeon_type)}')
+        logger.info(f'Target stars: {target_stars} (>=1 means cleared)')
+        logger.info(f'Max stage: {max_stage}')
+        logger.info(f'Team1 Preset: {team1_preset}, Team2 Preset: {team2_preset}')
+
+        if not self.goto_stage_selection_by_dungeon_type(dungeon_type):
+            logger.error('Failed to navigate to stage selection')
+            return False
+
+        # 进入后先尝试领取一次奖励（若不存在会直接返回 False，不影响）
+        self.check_and_claim_rewards(skip_first_screenshot=False)
+
+        while True:
+            next_stage, stage_stars = self.pure_fiction_next_stage_to_challenge()
+
+            if next_stage == -1:
+                logger.hr('All Stages Completed!', level=1)
+                logger.info('Pure Fiction: all 4 stages have yellow stars')
+                return True
+
+            if next_stage < 1 or next_stage > max_stage:
+                logger.error(f'Invalid next stage: {next_stage} (max={max_stage}), stage_stars={stage_stars}')
+                return False
+
+            logger.hr(f'Auto Challenge Pure Fiction Stage {next_stage}', level=1)
+            logger.info(f'[PureFiction] Stage stars snapshot: {stage_stars}')
+
+            success, actual_stars = self._challenge_stage(
+                dungeon_type=dungeon_type,
+                stage_num=next_stage,
+                team1_preset=team1_preset,
+                team2_preset=team2_preset,
+                target_stars=target_stars,
+            )
+
+            if not success:
+                logger.error(f'Pure Fiction stage {next_stage} failed or did not reach target stars: {actual_stars}')
+                return False
+
+            self.check_and_claim_rewards(skip_first_screenshot=False)
+
     def _challenge_stage(self, dungeon_type: str, stage_num: int, team1_preset: int,
                          team2_preset: int, target_stars: int = 3) -> tuple:
         """
@@ -656,7 +715,16 @@ class ForgottenHallChallenge(ForgottenHallUI):
         self.handle_battle_success()
 
         # 获取实际星数
-        actual_stars = self.get_stage_star_count(stage_num)
+        if dungeon_type == 'Pure_Fiction':
+            # 虚构叙事：固定页面黄星可能需要短暂刷新，做一次小轮询
+            actual_stars = 0
+            for _ in range(6):
+                actual_stars = self.pure_fiction_get_stage_star_count(stage_num)
+                if actual_stars >= target_stars:
+                    break
+                self.device.sleep(0.8)
+        else:
+            actual_stars = self.get_stage_star_count(stage_num)
         if actual_stars < 0:
             actual_stars = 0
 

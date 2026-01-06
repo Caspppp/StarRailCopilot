@@ -30,7 +30,7 @@ class ButtonTemplateManager:
         self._load_all_templates()
 
     def _load_all_templates(self):
-        """预加载所有8个模板（Tab: 2个，Nav: 6个），自动提取按钮区域"""
+        """预加载所有模板（Tab: 2个，Nav: 若干），自动提取按钮区域"""
         # Tab 按钮模板
         tab_templates = {
             "tab/treasures_lightward_check": "tab/treasures_lightward_check.png",
@@ -43,6 +43,8 @@ class ButtonTemplateManager:
             "nav/forgotten_hall_click": "nav/forgotten_hall_click.png",
             "nav/pure_fiction_check": "nav/pure_fiction_check.png",
             "nav/pure_fiction_click": "nav/pure_fiction_click.png",
+            "nav/pure_fiction_teleport": "nav/pure_fiction_teleport.png",
+            "nav/pure_fiction_start_story": "nav/pure_fiction_start_story.png",
             "nav/apocalyptic_shadow_check": "nav/apocalyptic_shadow_check.png",
             "nav/apocalyptic_shadow_click": "nav/apocalyptic_shadow_click.png",
         }
@@ -62,7 +64,7 @@ class ButtonTemplateManager:
             else:
                 logger.warning(f"Failed to load template: {key}")
 
-        logger.attr("ButtonTemplateManager", f"{len(self.templates)}/8 templates loaded")
+        logger.attr("ButtonTemplateManager", f"{len(self.templates)}/{len(all_templates)} templates loaded")
 
     def _load_template(self, path: Path) -> tuple[np.ndarray, tuple] | None:
         """

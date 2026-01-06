@@ -643,31 +643,41 @@ class CurrencyWarEntry(CurrencyWarNav, CurrencyWarUI):
         # 4. 循环领取奖励（带超时保护）
         timeout = Timer(15).start()
         claimed = False
+        claim_all_clicks = 0
+        max_claim_all_clicks = 2
+        reward_popup_seen = False
 
         while not timeout.reached():
             self.device.screenshot()
 
-            # 点击领取按钮
-            if self.appear(CLAIM_ALL_BUTTON, interval=1):
-                logger.info('Claiming rewards...')
-                self.device.click(CLAIM_ALL_BUTTON)
+            # 处理领取后的弹窗：一旦出现过奖励弹窗，视为已领取，无需再点击领取
+            if self.handle_reward(interval=1):
+                reward_popup_seen = True
                 claimed = True
-                self.wait_until_disappear(
-                    CLAIM_ALL_BUTTON,
-                    timeout=1.5,
-                    interval=0.2,
-                    skip_first_screenshot=False,
-                )
-                continue
-
-            # 处理领取后的弹窗
-            if self.handle_reward(interval=2):
                 continue
 
             if self.handle_popup_confirm():
                 continue
 
             if self.handle_popup_single():
+                continue
+
+            # 点击领取按钮：最多尝试 2 次；若已出现奖励弹窗则不再点击
+            if (not reward_popup_seen
+                    and claim_all_clicks < max_claim_all_clicks
+                    and self.appear(CLAIM_ALL_BUTTON, interval=1)):
+                logger.info(f'Claiming rewards... ({claim_all_clicks + 1}/{max_claim_all_clicks})')
+                self.device.click(CLAIM_ALL_BUTTON)
+                claim_all_clicks += 1
+                claimed = True
+                # 等待弹窗/界面响应，避免连续狂点
+                self.wait_until(
+                    appear=[self.reward_appear, CURRENCY_WAR_MAIN_CHECK],
+                    disappear=CLAIM_ALL_BUTTON,
+                    timeout=1.2,
+                    interval=0.2,
+                    skip_first_screenshot=False,
+                )
                 continue
 
             # 检查是否回到主界面（奖励领取完成）
@@ -699,11 +709,9 @@ class CurrencyWarEntry(CurrencyWarNav, CurrencyWarUI):
                 )
                 continue
 
-        # 5. 超时检查
+        # 5. 超时检查（仍尝试回到主界面并同步点数，避免卡在奖励页）
         if timeout.reached() and not claimed:
-            logger.warning('Reward claiming timeout')
-            self.check_stop_condition()
-            return False
+            logger.warning('Reward claiming timeout, no rewards claimed')
 
         # 6. 等待回到主界面
         self.wait_until_stable(CURRENCY_WAR_MAIN_CHECK, timeout=Timer(3))
