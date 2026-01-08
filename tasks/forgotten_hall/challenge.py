@@ -68,6 +68,17 @@ class ForgottenHallChallenge(ForgottenHallUI):
 
         return [self.config.ForgottenHallChallenge_DungeonType]
 
+    @staticmethod
+    def _safe_int(value, default: int) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _get_buff_config(self, key: str, default: int = 1) -> int:
+        value = getattr(self.config, key, default)
+        return self._safe_int(value, default)
+
     def run(self):
         """主执行方法"""
         success = False
@@ -79,6 +90,8 @@ class ForgottenHallChallenge(ForgottenHallUI):
             auto_selection = getattr(self.config, 'ForgottenHallChallenge_AutoStageSelection', False)
             team1_preset = int(self.config.ForgottenHallChallenge_Team1Preset)
             team2_preset = int(self.config.ForgottenHallChallenge_Team2Preset)
+            team1_buff = self._get_buff_config('ForgottenHallChallenge_Team1Buff', default=1)
+            team2_buff = self._get_buff_config('ForgottenHallChallenge_Team2Buff', default=1)
             dungeon_types = self._get_selected_dungeon_types()
 
             logger.hr('Forgotten Hall Challenge Configuration', level=1)
@@ -86,6 +99,8 @@ class ForgottenHallChallenge(ForgottenHallUI):
             logger.info(f'Auto Stage Selection: {auto_selection}')
             logger.info(f'Team1 Preset: {team1_preset}')
             logger.info(f'Team2 Preset: {team2_preset}')
+            if 'Pure_Fiction' in dungeon_types:
+                logger.info(f'Team1 Buff: {team1_buff}, Team2 Buff: {team2_buff}')
 
             if auto_selection:
                 for dungeon_type in dungeon_types:
@@ -106,6 +121,8 @@ class ForgottenHallChallenge(ForgottenHallUI):
                     stage_num=stage_num,
                     team1_preset=team1_preset,
                     team2_preset=team2_preset,
+                    team1_buff=team1_buff,
+                    team2_buff=team2_buff,
                 ):
                     return False
 
@@ -133,6 +150,8 @@ class ForgottenHallChallenge(ForgottenHallUI):
         stage_num: int,
         team1_preset: int,
         team2_preset: int,
+        team1_buff: int,
+        team2_buff: int,
     ) -> bool:
         max_stage = self._get_max_stage(dungeon_type)
         if max_stage is None:
@@ -154,6 +173,8 @@ class ForgottenHallChallenge(ForgottenHallUI):
             stage,
             team1_preset=team1_preset,
             team2_preset=team2_preset,
+            team1_buff=team1_buff,
+            team2_buff=team2_buff,
         ):
             logger.error('Failed to navigate to stage')
             return False
@@ -398,6 +419,8 @@ class ForgottenHallChallenge(ForgottenHallUI):
             dungeon_type = dungeon_type or self.config.ForgottenHallChallenge_DungeonType
             team1_preset = int(self.config.ForgottenHallChallenge_Team1Preset)
             team2_preset = int(self.config.ForgottenHallChallenge_Team2Preset)
+            team1_buff = self._get_buff_config('ForgottenHallChallenge_Team1Buff', default=1)
+            team2_buff = self._get_buff_config('ForgottenHallChallenge_Team2Buff', default=1)
             target_stars = int(getattr(self.config, 'ForgottenHallChallenge_TargetStars', 3))
             min_stage = int(getattr(self.config, 'ForgottenHallChallenge_MinStage', 1))
 
@@ -408,7 +431,12 @@ class ForgottenHallChallenge(ForgottenHallUI):
 
             if dungeon_type == 'Pure_Fiction':
                 # 虚构叙事为固定页面 + 逐关解锁，不适用 STAGE_LIST OCR 的自动选关逻辑
-                return self.run_auto_pure_fiction(team1_preset=team1_preset, team2_preset=team2_preset)
+                return self.run_auto_pure_fiction(
+                    team1_preset=team1_preset,
+                    team2_preset=team2_preset,
+                    team1_buff=team1_buff,
+                    team2_buff=team2_buff,
+                )
 
             if min_stage < 1:
                 min_stage = 1
@@ -421,6 +449,8 @@ class ForgottenHallChallenge(ForgottenHallUI):
             logger.info(f'Target stars: {target_stars}')
             logger.info(f'Min stage: {min_stage}, Max stage: {max_stage}')
             logger.info(f'Team1 Preset: {team1_preset}, Team2 Preset: {team2_preset}')
+            if dungeon_type == 'Pure_Fiction':
+                logger.info(f'Team1 Buff: {team1_buff}, Team2 Buff: {team2_buff}')
 
             # 2. 进入关卡选择界面（不选择特定关卡，保持游戏默认定位）
             if not self.goto_stage_selection_by_dungeon_type(dungeon_type):
@@ -467,6 +497,8 @@ class ForgottenHallChallenge(ForgottenHallUI):
                     stage_num=current_stage,
                     team1_preset=actual_team1,
                     team2_preset=actual_team2,
+                    team1_buff=team1_buff,
+                    team2_buff=team2_buff,
                     target_stars=target_stars
                 )
 
@@ -536,7 +568,13 @@ class ForgottenHallChallenge(ForgottenHallUI):
             logger.exception(e)
             return False
 
-    def run_auto_pure_fiction(self, team1_preset: int, team2_preset: int) -> bool:
+    def run_auto_pure_fiction(
+        self,
+        team1_preset: int,
+        team2_preset: int,
+        team1_buff: int,
+        team2_buff: int,
+    ) -> bool:
         """
         虚构叙事自动闯关（固定页面，最多 4 关）。
 
@@ -554,6 +592,7 @@ class ForgottenHallChallenge(ForgottenHallUI):
         logger.info(f'Target stars: {target_stars} (>=1 means cleared)')
         logger.info(f'Max stage: {max_stage}')
         logger.info(f'Team1 Preset: {team1_preset}, Team2 Preset: {team2_preset}')
+        logger.info(f'Team1 Buff: {team1_buff}, Team2 Buff: {team2_buff}')
 
         if not self.goto_stage_selection_by_dungeon_type(dungeon_type):
             logger.error('Failed to navigate to stage selection')
@@ -582,6 +621,8 @@ class ForgottenHallChallenge(ForgottenHallUI):
                 stage_num=next_stage,
                 team1_preset=team1_preset,
                 team2_preset=team2_preset,
+                team1_buff=team1_buff,
+                team2_buff=team2_buff,
                 target_stars=target_stars,
             )
 
@@ -591,8 +632,16 @@ class ForgottenHallChallenge(ForgottenHallUI):
 
             self.check_and_claim_rewards(skip_first_screenshot=False)
 
-    def _challenge_stage(self, dungeon_type: str, stage_num: int, team1_preset: int,
-                         team2_preset: int, target_stars: int = 3) -> tuple:
+    def _challenge_stage(
+        self,
+        dungeon_type: str,
+        stage_num: int,
+        team1_preset: int,
+        team2_preset: int,
+        team1_buff: int,
+        team2_buff: int,
+        target_stars: int = 3,
+    ) -> tuple:
         """
         挑战单个关卡
 
@@ -601,6 +650,8 @@ class ForgottenHallChallenge(ForgottenHallUI):
             stage_num: 关卡编号
             team1_preset: 上半预设编队
             team2_preset: 下半预设编队
+            team1_buff: 上半 Buff 选项编号（仅虚构叙事）
+            team2_buff: 下半 Buff 选项编号（仅虚构叙事）
             target_stars: 目标星数
 
         Returns:
@@ -616,8 +667,11 @@ class ForgottenHallChallenge(ForgottenHallUI):
         if not self.stage_goto_by_dungeon_type(
             dungeon_type,
             stage,
-                               team1_preset=team1_preset,
-                               team2_preset=team2_preset):
+            team1_preset=team1_preset,
+            team2_preset=team2_preset,
+            team1_buff=team1_buff,
+            team2_buff=team2_buff,
+        ):
             logger.error(f'Failed to navigate to stage {stage_num}')
             return (False, 0)
 

@@ -11,7 +11,7 @@ from module.logger.logger import logger, logger_debug
 from module.ocr.keyword import Keyword
 from module.ocr.ocr import Ocr, OcrResultButton
 from module.ui.draggable_list import DraggableList
-from tasks.base.assets.assets_base_page import FORGOTTEN_HALL_CHECK, MAP_EXIT
+from tasks.base.assets.assets_base_page import CLOSE, FORGOTTEN_HALL_CHECK, MAP_EXIT
 from tasks.base.assets.assets_base_popup import BUFF_Forgotten_Hall
 from tasks.base.page import page_guide
 from tasks.dungeon.keywords import DungeonList, KEYWORDS_DUNGEON_LIST, KEYWORDS_DUNGEON_NAV, KEYWORDS_DUNGEON_TAB
@@ -628,16 +628,20 @@ STAGE_LIST = DraggableStageList("ForgottenHallStageList", keyword_class=Forgotte
 class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
     PURE_FICTION_DETECTION_AREA = (505, 187, 1214, 568)
     PURE_FICTION_STAGE_STAR_AREAS: dict[int, tuple[int, int, int, int]] = {
-        1: (548, 418, 622, 445),
-        2: (802, 223, 903, 258),
-        3: (931, 538, 1023, 574),
-        4: (1135, 351, 1227, 387),
+        1: (548, 420, 622, 444),
+        2: (805, 225, 879, 249),
+        3: (933, 540, 1007, 564),
+        4: (1136, 353, 1211, 377),
     }
     PURE_FICTION_STAGE_LOCKED_TEXT_AREAS: dict[int, tuple[int, int, int, int]] = {
         2: (827, 224, 895, 253),
         3: (954, 539, 1022, 568),
         4: (1158, 353, 1226, 382),
     }
+    PURE_FICTION_STAR_SEGMENTS = 3
+    PURE_FICTION_STAR_MIN_PIXELS = 8
+    PURE_FICTION_BUFF_OPTION_AREA = (543, 106, 1253, 633)
+    PURE_FICTION_BUFF_OPTION_COUNT = 3
 
     APOCALYPTIC_SHADOW_STAGE_BUTTON_AREA = (177, 626, 1102, 662)
     APOCALYPTIC_SHADOW_STAGE_COUNT = 4
@@ -673,28 +677,104 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
             cur_x = seg_x2
         return areas
 
+    @staticmethod
+    def _split_area_vertically(area: tuple[int, int, int, int], segments: int) -> list[tuple[int, int, int, int]]:
+        x1, y1, x2, y2 = area
+        if segments <= 0:
+            return []
+
+        total_h = y2 - y1
+        base_h = total_h // segments
+        remainder = total_h % segments
+
+        areas: list[tuple[int, int, int, int]] = []
+        cur_y = y1
+        for i in range(segments):
+            seg_h = base_h + (1 if i < remainder else 0)
+            seg_y1 = cur_y
+            seg_y2 = cur_y + seg_h
+            areas.append((x1, seg_y1, x2, seg_y2))
+            cur_y = seg_y2
+        return areas
+
+    def _get_pure_fiction_buff_option_areas(self) -> dict[int, tuple[int, int, int, int]]:
+        raw_areas = self._split_area_vertically(
+            self.PURE_FICTION_BUFF_OPTION_AREA,
+            self.PURE_FICTION_BUFF_OPTION_COUNT,
+        )
+        padded: dict[int, tuple[int, int, int, int]] = {}
+        for idx, (x1, y1, x2, y2) in enumerate(raw_areas, start=1):
+            pad_x = min(16, max(0, (x2 - x1) // 10))
+            pad_y = min(16, max(0, (y2 - y1) // 10))
+            padded[idx] = (x1 + pad_x, y1 + pad_y, x2 - pad_x, y2 - pad_y)
+        return padded
+
+    @staticmethod
+    def _count_star_segments(mask: np.ndarray, segments: int, min_pixels: int) -> int:
+        if mask.size == 0 or segments <= 0:
+            return 0
+
+        height, width = mask.shape[:2]
+        if width <= 0 or height <= 0:
+            return 0
+
+        seg_w = max(1, width // segments)
+        count = 0
+        for idx in range(segments):
+            seg_x1 = idx * seg_w
+            seg_x2 = width if idx == segments - 1 else min(width, (idx + 1) * seg_w)
+            if cv2.countNonZero(mask[:, seg_x1:seg_x2]) >= min_pixels:
+                count += 1
+
+        return min(count, segments)
+
     def pure_fiction_scan_stage_stars(self, image=None) -> dict[int, int]:
         """
         扫描虚构叙事（Pure Fiction）固定页面的四关黄星数量。
 
         仅在给定区域内检测黄星，并按每关固定星星区域统计。
+        固定星位时不做连通域过滤，直接分三段统计黄星像素。
         """
-        from tools.forgotten_hall_star_detector.star_detector import detect_yellow_stars
-
         if image is None:
             self.device.screenshot()
             image = self.device.image
 
-        star_regions = detect_yellow_stars(image, search_area=self.PURE_FICTION_DETECTION_AREA)
+        lower_yellow = np.array([239, 184, 97], dtype=np.uint8)
+        upper_yellow = np.array([255, 214, 127], dtype=np.uint8)
+
+        x1, y1, x2, y2 = self.PURE_FICTION_DETECTION_AREA
+        h, w = image.shape[:2]
+        x1 = max(0, x1)
+        y1 = max(0, y1)
+        x2 = min(w, x2)
+        y2 = min(h, y2)
+
+        if x2 <= x1 or y2 <= y1:
+            logger.warning('[PureFiction] Invalid detection area, falling back to 0 stars')
+            return {stage_num: 0 for stage_num in self.PURE_FICTION_STAGE_STAR_AREAS}
+
+        crop_img = image[y1:y2, x1:x2]
+        yellow_mask = cv2.inRange(crop_img, lower_yellow, upper_yellow)
         stage_stars: dict[int, int] = {}
 
         for stage_num, area in self.PURE_FICTION_STAGE_STAR_AREAS.items():
-            count = 0
-            for star in star_regions:
-                center = star.get('center')
-                if center and self._point_in_area(center, area):
-                    count += 1
-            stage_stars[stage_num] = min(count, 3)
+            ax1, ay1, ax2, ay2 = area
+            rx1 = max(0, ax1 - x1)
+            ry1 = max(0, ay1 - y1)
+            rx2 = min(yellow_mask.shape[1], ax2 - x1)
+            ry2 = min(yellow_mask.shape[0], ay2 - y1)
+
+            if rx2 <= rx1 or ry2 <= ry1:
+                stage_stars[stage_num] = 0
+                continue
+
+            area_mask = yellow_mask[ry1:ry2, rx1:rx2]
+            count = self._count_star_segments(
+                area_mask,
+                self.PURE_FICTION_STAR_SEGMENTS,
+                self.PURE_FICTION_STAR_MIN_PIXELS,
+            )
+            stage_stars[stage_num] = count
 
         logger.info(f'[PureFiction] Stage stars: {stage_stars}')
         return stage_stars
@@ -807,9 +887,184 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
                 if self.appear(ENTRANCE_CHECKED, interval=0.2):
                     logger.info(f'[PureFiction] Stage {stage_num} selected')
                     return True
+                if self.appear(PURE_FICTION_TEAM_BUTTON, interval=0.2):
+                    logger.info(f'[PureFiction] Stage {stage_num} selected (team button detected)')
+                    return True
+                if self.appear(PURE_FICTION_TEAM_TITLE, interval=0.2):
+                    logger.info(f'[PureFiction] Stage {stage_num} selected (title detected)')
+                    return True
 
         logger.error(f'[PureFiction] Failed to select stage {stage_num}')
         return False
+
+    def _enter_pure_fiction_team_selection(self, skip_first_screenshot=True, timeout: float = 10.0) -> bool:
+        """
+        进入虚构叙事选队界面（点击“队伍”按钮），确保预设编队按钮可见。
+        """
+        logger.info('[PureFiction] Enter team selection')
+        timer = Timer(timeout).start()
+        interval = Timer(1.2)
+
+        while not timer.reached():
+            if skip_first_screenshot:
+                skip_first_screenshot = False
+            else:
+                self.device.screenshot()
+
+            if self.handle_forgotten_hall_buff():
+                continue
+
+            if self.appear(PRESET_TEAM, interval=0.2):
+                logger.info('[PureFiction] Team selection ready (preset button visible)')
+                return True
+
+            if self.appear(PURE_FICTION_TEAM_BUTTON, interval=0.2):
+                if interval.reached():
+                    logger.info('[PureFiction] Clicking team button')
+                    self.device.click(PURE_FICTION_TEAM_BUTTON)
+                    interval.reset()
+                continue
+
+            if self.appear(PURE_FICTION_TEAM_TITLE, interval=0.2):
+                self.device.sleep(0.3)
+                continue
+
+            self.device.sleep(0.3)
+
+        logger.warning('[PureFiction] Enter team selection timeout')
+        return False
+
+    def _wait_for_pure_fiction_buff_panel(self, skip_first_screenshot=True, timeout: float = 6.0) -> bool:
+        timer = Timer(timeout).start()
+        while not timer.reached():
+            if skip_first_screenshot:
+                skip_first_screenshot = False
+            else:
+                self.device.screenshot()
+
+            if self.appear(PURE_FICTION_BUFF_APPLY, interval=0.2):
+                return True
+
+            self.device.sleep(0.2)
+
+        return False
+
+    def _select_pure_fiction_buff_option(self, buff_index: int) -> bool:
+        from module.base.button import ClickButton
+
+        areas = self._get_pure_fiction_buff_option_areas()
+        area = areas.get(buff_index)
+        if area is None:
+            logger.error(f'[PureFiction] Invalid buff index: {buff_index}')
+            return False
+
+        x, y = self._area_center(area)
+        click_button = ClickButton(
+            area=(x - 6, y - 6, x + 6, y + 6),
+            name=f'PureFictionBuff_{buff_index}',
+        )
+        logger.info(f'[PureFiction] Select buff option {buff_index}')
+        self.device.click(click_button)
+        self.device.sleep(0.3)
+        return True
+
+    def _click_pure_fiction_buff_apply(self, skip_first_screenshot=True, timeout: float = 6.0) -> bool:
+        timer = Timer(timeout).start()
+        while not timer.reached():
+            if skip_first_screenshot:
+                skip_first_screenshot = False
+            else:
+                self.device.screenshot()
+
+            if self.appear(PURE_FICTION_BUFF_APPLY, interval=0.2):
+                logger.info('[PureFiction] Click buff apply')
+                self.device.click(PURE_FICTION_BUFF_APPLY)
+                return True
+
+            self.device.sleep(0.2)
+
+        logger.warning('[PureFiction] Buff apply button not found')
+        return False
+
+    def _exit_pure_fiction_buff_panel(self, skip_first_screenshot=True, timeout: float = 6.0) -> bool:
+        logger.info('[PureFiction] Exit buff panel')
+        timer = Timer(timeout).start()
+        while not timer.reached():
+            if skip_first_screenshot:
+                skip_first_screenshot = False
+            else:
+                self.device.screenshot()
+
+            if not self.appear(PURE_FICTION_BUFF_APPLY, interval=0.2):
+                return True
+
+            self.device.click(CLOSE)
+
+            if (self.appear(PURE_FICTION_TEAM1_BUFF, interval=0.2)
+                    or self.appear(PURE_FICTION_TEAM2_BUFF, interval=0.2)
+                    or self.appear(PRESET_TEAM, interval=0.2)):
+                return True
+
+            self.device.sleep(0.2)
+
+        logger.warning('[PureFiction] Exit buff panel timeout')
+        return False
+
+    def _select_pure_fiction_team_buff(self, team_index: int, buff_index: int, timeout: float = 8.0) -> bool:
+        if buff_index <= 0:
+            return True
+
+        if team_index not in (1, 2):
+            logger.error(f'[PureFiction] Invalid team index: {team_index}')
+            return False
+
+        if not self._enter_pure_fiction_team_selection(timeout=8.0):
+            logger.warning('[PureFiction] Team selection not ready for buff selection')
+            return False
+
+        button = PURE_FICTION_TEAM1_BUFF if team_index == 1 else PURE_FICTION_TEAM2_BUFF
+        logger.info(f'[PureFiction] Open buff panel for team {team_index}')
+
+        panel_opened = False
+        timer = Timer(timeout).start()
+        interval = Timer(1.2)
+        while not timer.reached():
+            self.device.screenshot()
+
+            if self.handle_forgotten_hall_buff():
+                continue
+
+            if self.appear(PURE_FICTION_BUFF_APPLY, interval=0.2):
+                panel_opened = True
+                break
+
+            if self.appear(button, interval=0.2) and interval.reached():
+                self.device.click(button)
+                interval.reset()
+                continue
+
+            self.device.sleep(0.2)
+
+        if not panel_opened:
+            logger.warning(f'[PureFiction] Buff panel not opened for team {team_index}')
+            return False
+
+        if not self._select_pure_fiction_buff_option(buff_index):
+            return False
+
+        self._click_pure_fiction_buff_apply()
+        self._exit_pure_fiction_buff_panel()
+        return True
+
+    def _configure_pure_fiction_buffs(self, team1_buff: int = None, team2_buff: int = None) -> bool:
+        success = True
+        if team1_buff:
+            if not self._select_pure_fiction_team_buff(team_index=1, buff_index=team1_buff):
+                success = False
+        if team2_buff:
+            if not self._select_pure_fiction_team_buff(team_index=2, buff_index=team2_buff):
+                success = False
+        return success
 
     def apocalyptic_shadow_get_stage_button_areas(self) -> dict[int, tuple[int, int, int, int]]:
         """
@@ -1049,6 +1304,8 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
         stage_keyword: ForgottenHallStage,
         team1_preset: int = None,
         team2_preset: int = None,
+        team1_buff: int = None,
+        team2_buff: int = None,
     ) -> bool:
         """
         根据 dungeon_type 导航到指定关卡并配置预设编队
@@ -1088,9 +1345,17 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
 
             if team1_preset or team2_preset:
                 logger.hr('Configure preset teams', level=1)
+                if dungeon_type == 'Pure_Fiction':
+                    if not self._enter_pure_fiction_team_selection(timeout=12):
+                        logger.warning('[PureFiction] Team selection entry may have failed, continuing...')
                 self._click_preset_team(timeout=15)
                 self._configure_preset_teams(team1_preset, team2_preset)
                 logger.info('Preset teams configuration completed')
+
+            if dungeon_type == 'Pure_Fiction' and (team1_buff or team2_buff):
+                logger.hr('Configure buffs', level=1)
+                if not self._configure_pure_fiction_buffs(team1_buff=team1_buff, team2_buff=team2_buff):
+                    logger.warning('[PureFiction] Buff configuration may have failed, continuing...')
 
             return True
 

@@ -103,6 +103,56 @@ PRESET_TEAM = ButtonWrapper(
         button=(318, 83, 394, 108),
     ),
 )
+PURE_FICTION_TEAM_TITLE = ButtonWrapper(
+    name='PURE_FICTION_TEAM_TITLE',
+    share=Button(
+        file='./assets/share/forgotten_hall/ui/PURE_FICTION_TEAM_TITLE.png',
+        area=(84, 15, 153, 33),
+        search=(64, -5, 173, 53),
+        color=(80, 84, 84),
+        button=(84, 15, 153, 33),
+    ),
+)
+PURE_FICTION_TEAM_BUTTON = ButtonWrapper(
+    name='PURE_FICTION_TEAM_BUTTON',
+    share=Button(
+        file='./assets/share/forgotten_hall/ui/PURE_FICTION_TEAM_BUTTON.png',
+        area=(887, 468, 918, 502),
+        search=(867, 448, 938, 522),
+        color=(28, 31, 33),
+        button=(887, 468, 918, 502),
+    ),
+)
+PURE_FICTION_TEAM1_BUFF = ButtonWrapper(
+    name='PURE_FICTION_TEAM1_BUFF',
+    share=Button(
+        file='./assets/share/forgotten_hall/ui/PURE_FICTION_TEAM1_BUFF.png',
+        area=(1190, 469, 1218, 497),
+        search=(1170, 449, 1238, 517),
+        color=(64, 68, 75),
+        button=(1190, 469, 1218, 497),
+    ),
+)
+PURE_FICTION_TEAM2_BUFF = ButtonWrapper(
+    name='PURE_FICTION_TEAM2_BUFF',
+    share=Button(
+        file='./assets/share/forgotten_hall/ui/PURE_FICTION_TEAM2_BUFF.png',
+        area=(1191, 563, 1219, 591),
+        search=(1171, 543, 1239, 611),
+        color=(67, 77, 85),
+        button=(1191, 563, 1219, 591),
+    ),
+)
+PURE_FICTION_BUFF_APPLY = ButtonWrapper(
+    name='PURE_FICTION_BUFF_APPLY',
+    share=Button(
+        file='./assets/share/forgotten_hall/ui/PURE_FICTION_BUFF_APPLY.png',
+        area=(1048, 645, 1132, 671),
+        search=(1028, 625, 1152, 691),
+        color=(165, 167, 169),
+        button=(1048, 645, 1132, 671),
+    ),
+)
 # 预设编队面板已打开检测（新版本，更可靠的黑色背景区域检测）
 PRESET_TEAM_PANEL_OPENED = ButtonWrapper(
     name='PRESET_TEAM_PANEL_OPENED',

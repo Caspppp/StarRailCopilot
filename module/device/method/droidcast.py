@@ -102,6 +102,10 @@ class DroidCast(Uiautomator2):
     _droidcast_port: int = 0
     droidcast_width: int = 0
     droidcast_height: int = 0
+    # (mode_key, base_h, base_w, rot, flip, order)
+    # flip: None, 'x' (horizontal), 'y' (vertical)
+    _droidcast_raw_decode_mode: t.Optional[t.Tuple[str, int, int, int, t.Optional[str], str]] = None
+    _droidcast_raw_decode_mode_orientation: t.Optional[int] = None
 
     @cached_property
     def droidcast_session(self):
@@ -125,7 +129,7 @@ class DroidCast(Uiautomator2):
             w, h = self.droidcast_width, self.droidcast_height
             if self.orientation == 0:
                 return f'http://127.0.0.1:{self._droidcast_port}{url}?width={w}&height={h}'
-            elif self.orientation == 1:
+            elif self.orientation in (1, 3):
                 return f'http://127.0.0.1:{self._droidcast_port}{url}?width={h}&height={w}'
             else:
                 # logger.warning('DroidCast receives invalid device orientation')
@@ -136,13 +140,12 @@ class DroidCast(Uiautomator2):
     def droidcast_raw_url(self, url='/screenshot'):
         if self.is_mumu_over_version_356:
             w, h = self.droidcast_width, self.droidcast_height
-            if self.orientation == 0:
+            # MuMu12/MuMu Pro (>3.5.6) reports a vertical device with rotation.
+            # Requesting a swapped (landscape) size may make some DroidCast_raw forks
+            # scale the portrait frame into a landscape buffer (blurry and breaks template matching).
+            # Always request the base (un-rotated) resolution and rotate locally if needed.
+            if w and h:
                 return f'http://127.0.0.1:{self._droidcast_port}{url}?width={w}&height={h}'
-            elif self.orientation == 1:
-                return f'http://127.0.0.1:{self._droidcast_port}{url}?width={h}&height={w}'
-            else:
-                # logger.warning('DroidCast receives invalid device orientation')
-                pass
 
         return f'http://127.0.0.1:{self._droidcast_port}{url}'
 
@@ -150,19 +153,32 @@ class DroidCast(Uiautomator2):
         logger.hr('DroidCast init')
         self.droidcast_stop()
         self._droidcast_update_resolution()
+        self._droidcast_raw_decode_mode = None
+        self._droidcast_raw_decode_mode_orientation = None
 
-        logger.info('Pushing DroidCast apk')
-        self.adb_push(self.config.DROIDCAST_FILEPATH_LOCAL, self.config.DROIDCAST_FILEPATH_REMOTE)
+        # Choose correct APK and main class based on version
+        if self.config.DROIDCAST_VERSION == 'DroidCast_raw':
+            logger.info('Pushing DroidCast_raw apk')
+            self.adb_push(self.config.DROIDCAST_RAW_FILEPATH_LOCAL, self.config.DROIDCAST_RAW_FILEPATH_REMOTE)
+            # Note: current bundled APK is DroidCastS (com.torther.droidcasts.*)
+            # `ink.mol.droidcast_raw.Main` is for another DroidCast_raw fork and is not present in DroidCastS.
+            main_class = 'com.torther.droidcasts.Main'
+            classpath = self.config.DROIDCAST_RAW_FILEPATH_REMOTE
+        else:
+            logger.info('Pushing DroidCast apk')
+            self.adb_push(self.config.DROIDCAST_FILEPATH_LOCAL, self.config.DROIDCAST_FILEPATH_REMOTE)
+            main_class = 'com.rayworks.droidcast.Main'
+            classpath = self.config.DROIDCAST_FILEPATH_REMOTE
 
         logger.info('Starting DroidCast apk')
-        # DroidCast_raw-release-1.0.apk
-        # CLASSPATH=/data/local/tmp/DroidCast_raw.apk app_process / ink.mol.droidcast_raw.Main > /dev/null
-        # adb shell CLASSPATH=/data/local/tmp/DroidCast_raw.apk app_process / ink.mol.droidcast_raw.Main
+        # Example:
+        # - DroidCast:    CLASSPATH=/data/local/tmp/DroidCast.apk  app_process / com.rayworks.droidcast.Main > /dev/null
+        # - DroidCastS:   CLASSPATH=/data/local/tmp/DroidCastS.apk app_process / com.torther.droidcasts.Main > /dev/null
         resp = self.u2_shell_background([
-            'CLASSPATH=/data/local/tmp/DroidCast_raw.apk',
+            f'CLASSPATH={classpath}',
             'app_process',
             '/',
-            'ink.mol.droidcast_raw.Main',
+            main_class,
             '>',
             '/dev/null'
         ])
@@ -217,78 +233,215 @@ class DroidCast(Uiautomator2):
         if image is None:
             raise ImageTruncated('Empty image after cv2.cvtColor')
 
+        # Some emulators (e.g. MuMu12/MuMu Pro) report a vertical device with rotation,
+        # while DroidCast may return frames in the un-rotated coordinate system.
         if self.is_mumu_over_version_356:
             if self.orientation == 1:
                 image = cv2.rotate(image, cv2.ROTATE_90_CLOCKWISE)
+            elif self.orientation == 3:
+                image = cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
+            elif self.orientation == 2:
+                image = cv2.rotate(image, cv2.ROTATE_180)
 
         return image
 
     @retry
     def screenshot_droidcast_raw(self):
         self.config.DROIDCAST_VERSION = 'DroidCast_raw'
-        shape = (720, 1280)
+        # DroidCast_raw returns a RGB565 bitmap.
+        #
+        # Different emulators/forks may send the raw frame in different coordinate systems.
+        # To avoid both "scrambled stripes" (wrong reshape) and "90° rotated" frames,
+        # calibrate the best decode mode once (per device orientation) by comparing with uiautomator2.
+        #
+        # Decode mode = (base_reshape, extra_rotation)
+        # - base_reshape: pick the correct (h, w) for the raw buffer
+        # - extra_rotation: 0 / 90 / -90 / 180, applied after reshape
         if self.is_mumu_over_version_356:
             if not self.droidcast_width or not self.droidcast_height:
                 self._droidcast_update_resolution()
-            if self.droidcast_height and self.droidcast_width:
-                shape = (self.droidcast_height, self.droidcast_width)
 
-        rotate = self.is_mumu_over_version_356 and self.orientation == 1
+        w_raw, h_raw = self.resolution_uiautomator2(cal_rotation=False)
+        w_rot, h_rot = self.resolution_uiautomator2(cal_rotation=True)
+        o = self.get_orientation()
 
-        image = self.droidcast_session.get(self.droidcast_raw_url(), timeout=3).content
-        # DroidCast_raw returns a RGB565 bitmap
+        raw = self.droidcast_session.get(self.droidcast_raw_url(), timeout=3).content
+        arr = np.frombuffer(raw, dtype=np.uint16)
 
-        try:
-            arr = np.frombuffer(image, dtype=np.uint16)
-            if rotate:
-                arr = arr.reshape(shape)
-                # arr = cv2.rotate(arr, cv2.ROTATE_90_CLOCKWISE)
-                # A little bit faster?
-                arr = cv2.transpose(arr)
-                cv2.flip(arr, 1, dst=arr)
+        def rotate_2d(a: np.ndarray, rot: int, flip: t.Optional[str] = None) -> np.ndarray:
+            # OpenCV assumes row-major (C-contiguous) memory.
+            # ascontiguousarray preserves the logical view while ensuring C-order memory layout.
+            if not a.flags['C_CONTIGUOUS']:
+                a = np.ascontiguousarray(a)
+            if rot == 90:
+                a = cv2.transpose(a)
+                a = cv2.flip(a, 1)
+            elif rot == -90:
+                a = cv2.transpose(a)
+                a = cv2.flip(a, 0)
+            elif rot == 180:
+                a = cv2.flip(a, -1)
+            # Apply flip after rotation
+            if flip == 'x':
+                a = cv2.flip(a, 1)  # Horizontal flip
+            elif flip == 'y':
+                a = cv2.flip(a, 0)  # Vertical flip
+            return a
+
+        def smoothness_score(a: np.ndarray) -> float:
+            # Wrong reshape usually produces strong “striped” artifacts and very noisy adjacent differences.
+            # Downsample for speed.
+            if a.size == 0:
+                return float('inf')
+            s = a[::8, ::8].astype(np.int32)
+            if s.shape[0] < 2 or s.shape[1] < 2:
+                return float('inf')
+            dh = np.mean(np.abs(np.diff(s, axis=1)))
+            dv = np.mean(np.abs(np.diff(s, axis=0)))
+            return float(dh + dv)
+
+        def rgb565_to_gray_u8(a: np.ndarray) -> np.ndarray:
+            # Use green channel as a cheap luminance proxy (6 bits -> 8 bits).
+            # RGB565: rrrrrggggggbbbbb (g is 6-bit)
+            g6 = np.bitwise_and(np.right_shift(a, 5), 0x3F).astype(np.uint16)
+            g8 = (g6 * 255 + 31) // 63
+            return g8.astype(np.uint8)
+
+        # Fast path: reuse cached decode mode for the same device orientation.
+        if self._droidcast_raw_decode_mode is not None and self._droidcast_raw_decode_mode_orientation == o:
+            mode_key, base_h, base_w, rot, flip, order = self._droidcast_raw_decode_mode
+            try:
+                arr2d = arr.reshape((base_h, base_w), order=order)
+                arr2d = rotate_2d(arr2d, rot, flip)
+            except ValueError:
+                # Resolution changed or mode became invalid, re-calibrate below.
+                self._droidcast_raw_decode_mode = None
+                self._droidcast_raw_decode_mode_orientation = None
             else:
-                arr = arr.reshape(shape)
-        except ValueError as e:
-            if len(image) < 500:
-                logger.warning(f'Unexpected screenshot: {image}')
-            # Try to load as `DroidCast`
-            image = np.frombuffer(image, np.uint8)
-            if image is not None:
-                image = cv2.imdecode(image, cv2.IMREAD_COLOR)
-                if image is not None:
-                    raise DroidCastVersionIncompatible(
-                        'Requesting screenshots from `DroidCast_raw` but server is `DroidCast`')
-            # ValueError: cannot reshape array of size 0 into shape (720,1280)
-            raise ImageTruncated(str(e))
+                return self._rgb565_to_rgb888(arr2d)
 
-        # Convert RGB565 to RGB888
-        # https://blog.csdn.net/happy08god/article/details/10516871
+        # Candidate base reshapes (dedup by shape + order).
+        shapes: list[tuple[str, int, int, str]] = []
+        seen_shapes: set[tuple[int, int, str]] = set()
 
-        # r = (arr & 0b1111100000000000) >> (11 - 3)
-        # g = (arr & 0b0000011111100000) >> (5 - 2)
-        # b = (arr & 0b0000000000011111) << 3
-        # r |= (r & 0b11100000) >> 5
-        # g |= (g & 0b11000000) >> 6
-        # b |= (b & 0b11100000) >> 5
-        # r = r.astype(np.uint8)
-        # g = g.astype(np.uint8)
-        # b = b.astype(np.uint8)
-        # image = cv2.merge([r, g, b])
+        def add_shape(key: str, h: int, w: int, order: str) -> None:
+            if not h or not w:
+                return
+            if h * w != arr.size:
+                return
+            shape = (h, w, order)
+            if shape in seen_shapes:
+                return
+            seen_shapes.add(shape)
+            shapes.append((key, h, w, order))
 
-        # The same as the code above but costs about 2.7ms instead of 16ms.
-        # Note that cv2.convertScaleAbs is 5x fast as cv2.multiply, cv2.add is 8x fast as cv2.convertScaleAbs
-        # Note that cv2.convertScaleAbs includes rounding
-        tmp = np.empty_like(arr)
-        cv2.bitwise_and(arr, 0b1111100000000000, dst=tmp)
-        r = cv2.convertScaleAbs(tmp, alpha=0.0040283203125)  # 0.00390625 * 1.03125
-        cv2.bitwise_and(arr, 0b0000011111100000, dst=tmp)
-        g = cv2.convertScaleAbs(tmp, alpha=0.126953125)  # 0.125 * 1.015625
-        cv2.bitwise_and(arr, 0b0000000000011111, dst=tmp)
-        b = cv2.convertScaleAbs(tmp, alpha=8.25)  # 8 * 1.03125
+        for order in ('C', 'F'):
+            add_shape('raw', h_raw, w_raw, order)
+            add_shape('raw_swapped', w_raw, h_raw, order)
+            add_shape('rot', h_rot, w_rot, order)
+            add_shape('rot_swapped', w_rot, h_rot, order)
 
-        image = cv2.merge([r, g, b])
+        base_candidates: list[tuple[str, str, np.ndarray, float]] = []
+        for key, h, w, order in shapes:
+            try:
+                a = arr.reshape((h, w), order=order)
+            except ValueError:
+                continue
+            base_candidates.append((key, order, a, smoothness_score(a)))
 
-        return image
+        if not base_candidates:
+            if len(raw) < 500:
+                logger.warning(f'Unexpected screenshot: {raw}')
+            # Try to load as `DroidCast` (PNG/JPEG).
+            raw_u8 = np.frombuffer(raw, np.uint8)
+            decoded = cv2.imdecode(raw_u8, cv2.IMREAD_COLOR) if raw_u8 is not None else None
+            if decoded is not None:
+                raise DroidCastVersionIncompatible(
+                    'Requesting screenshots from `DroidCast_raw` but server is `DroidCast`'
+                )
+            raise ImageTruncated('Unable to reshape DroidCast_raw image buffer')
+
+        # Sort candidates by smoothness for logging, but don't filter aggressively.
+        # The reference comparison will select the correct one regardless of smoothness.
+        base_candidates.sort(key=lambda x: x[3])
+
+        # Calibrate decode mode against uiautomator2 (once per orientation).
+        # This picks both the correct reshape AND the required rotation, but only among
+        # transformations that preserve the reference resolution (no resizing).
+        try:
+            ref = self.screenshot_uiautomator2()
+            ref_gray = cv2.cvtColor(ref, cv2.COLOR_RGB2GRAY)[::8, ::8]
+        except Exception as e:
+            logger.warning(f'Failed to calibrate DroidCast_raw decode mode, fallback to smoothness: {e}')
+            mode_key, order, arr2d, _ = base_candidates[0]
+            rot = 0
+            flip = None
+            base_h, base_w = arr2d.shape[:2]
+            arr2d = rotate_2d(arr2d, rot, flip)
+        else:
+            # Transformations: (rotation, flip)
+            # flip: None, 'x' (horizontal), 'y' (vertical)
+            transforms = [
+                (0, None),      # No transformation
+                (90, None),     # Rotate 90° CW
+                (-90, None),    # Rotate 90° CCW
+                (180, None),    # Rotate 180°
+                (0, 'x'),       # Horizontal flip
+                (0, 'y'),       # Vertical flip
+                (90, 'x'),      # Rotate 90° CW + horizontal flip
+                (-90, 'x'),     # Rotate 90° CCW + horizontal flip
+            ]
+            best: t.Optional[tuple[float, str, str, int, t.Optional[str], np.ndarray]] = None
+            for key, order, a, _smooth in base_candidates:
+                gray = rgb565_to_gray_u8(a)[::8, ::8]
+                for rot, flip in transforms:
+                    g2 = rotate_2d(gray, rot, flip)
+                    if g2.shape != ref_gray.shape:
+                        continue
+                    score = float(np.mean(cv2.absdiff(g2, ref_gray)))
+                    if best is None or score < best[0]:
+                        best = (score, key, order, rot, flip, a)
+
+            if best is None:
+                # No transformation matched reference resolution; fallback to smoothest.
+                mode_key, order, arr2d, _ = base_candidates[0]
+                rot = 0
+                flip = None
+                base_h, base_w = arr2d.shape[:2]
+                arr2d = rotate_2d(arr2d, rot, flip)
+            else:
+                score, mode_key, order, rot, flip, base_arr2d = best
+                base_h, base_w = base_arr2d.shape[:2]
+                arr2d = rotate_2d(base_arr2d, rot, flip)
+                flip_str = f' flip={flip}' if flip else ''
+                logger.attr(
+                    'DroidCast_raw decode',
+                    f'{mode_key}/{order} ({base_w}x{base_h}) rot={rot}{flip_str} score={score:.2f}',
+                )
+
+        self._droidcast_raw_decode_mode = (mode_key, base_h, base_w, rot, flip, order)
+        self._droidcast_raw_decode_mode_orientation = o
+
+        return self._rgb565_to_rgb888(arr2d)
+
+    @staticmethod
+    def _rgb565_to_rgb888(arr2d: np.ndarray) -> np.ndarray:
+        try:
+            # OpenCV assumes row-major (C-contiguous) memory.
+            # ascontiguousarray preserves the logical view while ensuring C-order memory layout.
+            if not arr2d.flags['C_CONTIGUOUS']:
+                arr2d = np.ascontiguousarray(arr2d)
+            # Convert RGB565 -> RGB888
+            tmp = np.empty_like(arr2d)
+            cv2.bitwise_and(arr2d, 0b1111100000000000, dst=tmp)
+            r = cv2.convertScaleAbs(tmp, alpha=0.0040283203125)  # 0.00390625 * 1.03125
+            cv2.bitwise_and(arr2d, 0b0000011111100000, dst=tmp)
+            g = cv2.convertScaleAbs(tmp, alpha=0.126953125)  # 0.125 * 1.015625
+            cv2.bitwise_and(arr2d, 0b0000000000011111, dst=tmp)
+            b = cv2.convertScaleAbs(tmp, alpha=8.25)  # 8 * 1.03125
+            return cv2.merge([r, g, b])
+        except Exception as e:
+            raise ImageTruncated(str(e)) from e
 
     def droidcast_wait_startup(self):
         """

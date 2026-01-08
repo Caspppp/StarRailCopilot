@@ -476,6 +476,12 @@ ForgottenHallChallenge:
   Team2Preset:
     value: 1
     option: [ 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 ]
+  Team1Buff:
+    value: 1
+    option: [ 1, 2, 3 ]
+  Team2Buff:
+    value: 1
+    option: [ 1, 2, 3 ]
   AutoStageSelection:
     value: true
     option: [ true, false ]
