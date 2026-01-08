@@ -102,9 +102,14 @@ class DroidCast(Uiautomator2):
     _droidcast_port: int = 0
     droidcast_width: int = 0
     droidcast_height: int = 0
-    # (mode_key, base_h, base_w, rot, flip, order)
+    # (mode_key, base_h, base_w, rot, flip, order, request_mode)
     # flip: None, 'x' (horizontal), 'y' (vertical)
-    _droidcast_raw_decode_mode: t.Optional[t.Tuple[str, int, int, int, t.Optional[str], str]] = None
+    # request_mode:
+    # - 'auto': default URL logic
+    # - 'none': no query params
+    # - 'raw' / 'raw_swap': use resolution_uiautomator2(cal_rotation=False)
+    # - 'rot' / 'rot_swap': use resolution_uiautomator2(cal_rotation=True)
+    _droidcast_raw_decode_mode: t.Optional[t.Tuple[str, int, int, int, t.Optional[str], str, str]] = None
     _droidcast_raw_decode_mode_orientation: t.Optional[int] = None
 
     @cached_property
@@ -137,17 +142,24 @@ class DroidCast(Uiautomator2):
 
         return f'http://127.0.0.1:{self._droidcast_port}{url}'
 
-    def droidcast_raw_url(self, url='/screenshot'):
+    def droidcast_raw_url(
+        self,
+        url='/screenshot',
+        *,
+        width: t.Optional[int] = None,
+        height: t.Optional[int] = None,
+        force_no_size: bool = False,
+    ):
+        base = f'http://127.0.0.1:{self._droidcast_port}{url}'
+        if force_no_size:
+            return base
+        if width and height:
+            return f'{base}?width={width}&height={height}'
         if self.is_mumu_over_version_356:
             w, h = self.droidcast_width, self.droidcast_height
-            # MuMu12/MuMu Pro (>3.5.6) reports a vertical device with rotation.
-            # Requesting a swapped (landscape) size may make some DroidCast_raw forks
-            # scale the portrait frame into a landscape buffer (blurry and breaks template matching).
-            # Always request the base (un-rotated) resolution and rotate locally if needed.
             if w and h:
-                return f'http://127.0.0.1:{self._droidcast_port}{url}?width={w}&height={h}'
-
-        return f'http://127.0.0.1:{self._droidcast_port}{url}'
+                return f'{base}?width={w}&height={h}'
+        return base
 
     def droidcast_init(self):
         logger.hr('DroidCast init')
@@ -265,9 +277,6 @@ class DroidCast(Uiautomator2):
         w_rot, h_rot = self.resolution_uiautomator2(cal_rotation=True)
         o = self.get_orientation()
 
-        raw = self.droidcast_session.get(self.droidcast_raw_url(), timeout=3).content
-        arr = np.frombuffer(raw, dtype=np.uint16)
-
         def rotate_2d(a: np.ndarray, rot: int, flip: t.Optional[str] = None) -> np.ndarray:
             # OpenCV assumes row-major (C-contiguous) memory.
             # ascontiguousarray preserves the logical view while ensuring C-order memory layout.
@@ -307,78 +316,82 @@ class DroidCast(Uiautomator2):
             g8 = (g6 * 255 + 31) // 63
             return g8.astype(np.uint8)
 
-        # Fast path: reuse cached decode mode for the same device orientation.
-        if self._droidcast_raw_decode_mode is not None and self._droidcast_raw_decode_mode_orientation == o:
-            mode_key, base_h, base_w, rot, flip, order = self._droidcast_raw_decode_mode
-            try:
-                arr2d = arr.reshape((base_h, base_w), order=order)
+        def _raw_url(request_mode: str) -> str:
+            if request_mode == 'none':
+                return self.droidcast_raw_url(force_no_size=True)
+            if request_mode == 'raw':
+                return self.droidcast_raw_url(width=w_raw, height=h_raw)
+            if request_mode == 'raw_swap':
+                return self.droidcast_raw_url(width=h_raw, height=w_raw)
+            if request_mode == 'rot':
+                return self.droidcast_raw_url(width=w_rot, height=h_rot)
+            if request_mode == 'rot_swap':
+                return self.droidcast_raw_url(width=h_rot, height=w_rot)
+            # 'auto' or unknown
+            return self.droidcast_raw_url()
+
+        def _decode_one(raw: bytes, ref_gray: t.Optional[np.ndarray]) -> t.Optional[
+            tuple[float, float, str, str, int, t.Optional[str], int, int, np.ndarray]
+        ]:
+            """
+            Returns:
+                (score, smoothness, mode_key, order, rot, flip, base_h, base_w, arr2d)
+            """
+            arr = np.frombuffer(raw, dtype=np.uint16)
+
+            # Candidate base reshapes (dedup by shape + order).
+            shapes: list[tuple[str, int, int, str]] = []
+            seen_shapes: set[tuple[int, int, str]] = set()
+
+            def add_shape(key: str, h: int, w: int, order: str) -> None:
+                if not h or not w:
+                    return
+                if h * w != arr.size:
+                    return
+                shape = (h, w, order)
+                if shape in seen_shapes:
+                    return
+                seen_shapes.add(shape)
+                shapes.append((key, h, w, order))
+
+            for order in ('C', 'F'):
+                add_shape('raw', h_raw, w_raw, order)
+                add_shape('raw_swapped', w_raw, h_raw, order)
+                add_shape('rot', h_rot, w_rot, order)
+                add_shape('rot_swapped', w_rot, h_rot, order)
+
+            base_candidates: list[tuple[str, str, np.ndarray, float]] = []
+            for key, h, w, order in shapes:
+                try:
+                    a = arr.reshape((h, w), order=order)
+                except ValueError:
+                    continue
+                base_candidates.append((key, order, a, smoothness_score(a)))
+
+            if not base_candidates:
+                if len(raw) < 500:
+                    logger.warning(f'Unexpected screenshot: {raw}')
+                # Try to load as `DroidCast` (PNG/JPEG).
+                raw_u8 = np.frombuffer(raw, np.uint8)
+                decoded = cv2.imdecode(raw_u8, cv2.IMREAD_COLOR) if raw_u8 is not None else None
+                if decoded is not None:
+                    raise DroidCastVersionIncompatible(
+                        'Requesting screenshots from `DroidCast_raw` but server is `DroidCast`'
+                    )
+                raise ImageTruncated('Unable to reshape DroidCast_raw image buffer')
+
+            # Sort candidates by smoothness for logging, but don't filter aggressively.
+            # The reference comparison will select the correct one regardless of smoothness.
+            base_candidates.sort(key=lambda x: x[3])
+
+            if ref_gray is None:
+                mode_key, order, arr2d, _ = base_candidates[0]
+                rot = 0
+                flip = None
+                base_h, base_w = arr2d.shape[:2]
                 arr2d = rotate_2d(arr2d, rot, flip)
-            except ValueError:
-                # Resolution changed or mode became invalid, re-calibrate below.
-                self._droidcast_raw_decode_mode = None
-                self._droidcast_raw_decode_mode_orientation = None
-            else:
-                return self._rgb565_to_rgb888(arr2d)
+                return float('inf'), float(base_candidates[0][3]), mode_key, order, rot, flip, base_h, base_w, arr2d
 
-        # Candidate base reshapes (dedup by shape + order).
-        shapes: list[tuple[str, int, int, str]] = []
-        seen_shapes: set[tuple[int, int, str]] = set()
-
-        def add_shape(key: str, h: int, w: int, order: str) -> None:
-            if not h or not w:
-                return
-            if h * w != arr.size:
-                return
-            shape = (h, w, order)
-            if shape in seen_shapes:
-                return
-            seen_shapes.add(shape)
-            shapes.append((key, h, w, order))
-
-        for order in ('C', 'F'):
-            add_shape('raw', h_raw, w_raw, order)
-            add_shape('raw_swapped', w_raw, h_raw, order)
-            add_shape('rot', h_rot, w_rot, order)
-            add_shape('rot_swapped', w_rot, h_rot, order)
-
-        base_candidates: list[tuple[str, str, np.ndarray, float]] = []
-        for key, h, w, order in shapes:
-            try:
-                a = arr.reshape((h, w), order=order)
-            except ValueError:
-                continue
-            base_candidates.append((key, order, a, smoothness_score(a)))
-
-        if not base_candidates:
-            if len(raw) < 500:
-                logger.warning(f'Unexpected screenshot: {raw}')
-            # Try to load as `DroidCast` (PNG/JPEG).
-            raw_u8 = np.frombuffer(raw, np.uint8)
-            decoded = cv2.imdecode(raw_u8, cv2.IMREAD_COLOR) if raw_u8 is not None else None
-            if decoded is not None:
-                raise DroidCastVersionIncompatible(
-                    'Requesting screenshots from `DroidCast_raw` but server is `DroidCast`'
-                )
-            raise ImageTruncated('Unable to reshape DroidCast_raw image buffer')
-
-        # Sort candidates by smoothness for logging, but don't filter aggressively.
-        # The reference comparison will select the correct one regardless of smoothness.
-        base_candidates.sort(key=lambda x: x[3])
-
-        # Calibrate decode mode against uiautomator2 (once per orientation).
-        # This picks both the correct reshape AND the required rotation, but only among
-        # transformations that preserve the reference resolution (no resizing).
-        try:
-            ref = self.screenshot_uiautomator2()
-            ref_gray = cv2.cvtColor(ref, cv2.COLOR_RGB2GRAY)[::8, ::8]
-        except Exception as e:
-            logger.warning(f'Failed to calibrate DroidCast_raw decode mode, fallback to smoothness: {e}')
-            mode_key, order, arr2d, _ = base_candidates[0]
-            rot = 0
-            flip = None
-            base_h, base_w = arr2d.shape[:2]
-            arr2d = rotate_2d(arr2d, rot, flip)
-        else:
             # Transformations: (rotation, flip)
             # flip: None, 'x' (horizontal), 'y' (vertical)
             transforms = [
@@ -403,23 +416,109 @@ class DroidCast(Uiautomator2):
                         best = (score, key, order, rot, flip, a)
 
             if best is None:
-                # No transformation matched reference resolution; fallback to smoothest.
-                mode_key, order, arr2d, _ = base_candidates[0]
-                rot = 0
-                flip = None
-                base_h, base_w = arr2d.shape[:2]
-                arr2d = rotate_2d(arr2d, rot, flip)
-            else:
-                score, mode_key, order, rot, flip, base_arr2d = best
-                base_h, base_w = base_arr2d.shape[:2]
-                arr2d = rotate_2d(base_arr2d, rot, flip)
-                flip_str = f' flip={flip}' if flip else ''
-                logger.attr(
-                    'DroidCast_raw decode',
-                    f'{mode_key}/{order} ({base_w}x{base_h}) rot={rot}{flip_str} score={score:.2f}',
-                )
+                # No transformation matched reference resolution.
+                return None
 
-        self._droidcast_raw_decode_mode = (mode_key, base_h, base_w, rot, flip, order)
+            score, mode_key, order, rot, flip, base_arr2d = best
+            base_h, base_w = base_arr2d.shape[:2]
+            arr2d = rotate_2d(base_arr2d, rot, flip)
+            return score, smoothness_score(base_arr2d), mode_key, order, rot, flip, base_h, base_w, arr2d
+
+        # Fast path: reuse cached decode mode for the same device orientation.
+        if self._droidcast_raw_decode_mode is not None and self._droidcast_raw_decode_mode_orientation == o:
+            try:
+                mode_key, base_h, base_w, rot, flip, order, request_mode = self._droidcast_raw_decode_mode
+                raw = self.droidcast_session.get(_raw_url(request_mode), timeout=3).content
+                arr = np.frombuffer(raw, dtype=np.uint16)
+                arr2d = arr.reshape((base_h, base_w), order=order)
+                arr2d = rotate_2d(arr2d, rot, flip)
+            except ValueError:
+                # Resolution changed or mode became invalid, re-calibrate below.
+                self._droidcast_raw_decode_mode = None
+                self._droidcast_raw_decode_mode_orientation = None
+            else:
+                return self._rgb565_to_rgb888(arr2d)
+
+        # Calibrate decode mode against a reference screenshot (once per orientation).
+        # This picks the correct reshape, required rotation, and (for some forks) the best request size.
+        ref_gray: t.Optional[np.ndarray] = None
+        try:
+            ref = self.screenshot_uiautomator2()
+            if ref is None or ref.size == 0:
+                raise ImageTruncated('Empty uiautomator2 screenshot')
+            if float(np.mean(ref)) < 1:
+                raise ImageTruncated('Pure black uiautomator2 screenshot')
+            ref_gray = cv2.cvtColor(ref, cv2.COLOR_RGB2GRAY)[::8, ::8]
+        except Exception as e:
+            # uiautomator2 screenshot may be unavailable or unstable on some emulators.
+            # Fall back to ADB screencap if available (slower but more reliable).
+            logger.warning(f'Failed to get reference from uiautomator2, fallback to adb: {e}')
+            if hasattr(self, 'screenshot_adb'):
+                try:
+                    ref = self.screenshot_adb()
+                    ref_gray = cv2.cvtColor(ref, cv2.COLOR_RGB2GRAY)[::8, ::8]
+                except Exception as e2:
+                    logger.warning(f'Failed to get reference from adb, fallback to smoothness: {e2}')
+                    ref_gray = None
+            else:
+                ref_gray = None
+
+        # Some DroidCast_raw forks/emulators behave differently depending on requested size:
+        # - non-uniform scaling (squeezed UI)
+        # - scrambled stripes (buffer layout mismatch)
+        # Try a small set of request variants once, then cache the best one.
+        request_modes = [
+            'auto',
+            'rot',
+            'raw',
+            'rot_swap',
+            'raw_swap',
+            'none',
+        ]
+        # Dedup by final URL to avoid redundant HTTP requests.
+        request_candidates: list[tuple[str, str]] = []
+        seen_urls: set[str] = set()
+        for mode in request_modes:
+            url = _raw_url(mode)
+            if url in seen_urls:
+                continue
+            seen_urls.add(url)
+            request_candidates.append((mode, url))
+
+        def _rank(score: float, smooth: float) -> tuple[int, float, float]:
+            if np.isfinite(score):
+                return 0, score, smooth
+            return 1, smooth, 0.0
+
+        best_overall: t.Optional[
+            tuple[tuple[int, float, float], str, float, float, str, str, int, t.Optional[str], int, int, np.ndarray]
+        ] = None
+        for request_mode, url in request_candidates:
+            raw = self.droidcast_session.get(url, timeout=3).content
+            try:
+                decoded = _decode_one(raw, ref_gray)
+            except Exception as e:
+                logger.debug(f'DroidCast_raw request_mode={request_mode} decode failed: {e}')
+                continue
+            if decoded is None:
+                continue
+            score, smooth, mode_key, order, rot, flip, base_h, base_w, arr2d = decoded
+            rank = _rank(float(score), float(smooth))
+            if best_overall is None or rank < best_overall[0]:
+                best_overall = (rank, request_mode, float(score), float(smooth), mode_key, order, rot, flip, base_h, base_w, arr2d)
+
+        if best_overall is None:
+            raise ImageTruncated('Unable to decode DroidCast_raw image buffer')
+
+        _rank_tuple, request_mode, score, smooth, mode_key, order, rot, flip, base_h, base_w, arr2d = best_overall
+        flip_str = f' flip={flip}' if flip else ''
+        score_str = 'N/A' if not np.isfinite(score) else f'{score:.2f}'
+        logger.attr(
+            'DroidCast_raw decode',
+            f'{request_mode} {mode_key}/{order} ({base_w}x{base_h}) rot={rot}{flip_str} score={score_str} smooth={smooth:.0f}',
+        )
+
+        self._droidcast_raw_decode_mode = (mode_key, base_h, base_w, rot, flip, order, request_mode)
         self._droidcast_raw_decode_mode_orientation = o
 
         return self._rgb565_to_rgb888(arr2d)
