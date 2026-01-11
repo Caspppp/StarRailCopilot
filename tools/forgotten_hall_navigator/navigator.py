@@ -9,6 +9,7 @@ import numpy as np
 from typing import Optional, Tuple
 from module.logger.logger import logger, logger_debug
 from module.base.button import ClickButton
+from module.base.timer import Timer
 
 from .templates import ButtonTemplateManager
 from . import config
@@ -128,6 +129,7 @@ class TreasuresLightwardNavigator:
         if template is None or area is None:
             return False
 
+        clicked = False
         for attempt in range(1, config.MAX_NAV_RETRY + 1):
             device.screenshot()
             pos = self._find_template(
@@ -137,14 +139,23 @@ class TreasuresLightwardNavigator:
                 threshold=config.TEMPLATE_MATCH_THRESHOLD_CLICK,
             )
             if pos is None:
-                return False
+                return clicked
 
             logger.info(f"Pure Fiction start story detected, clicking (attempt {attempt}/{config.MAX_NAV_RETRY})")
             self._click_position(device, pos)
             self._wait_for_screen_stable(device, timeout=3.0, check_interval=0.3)
-            time.sleep(0.8)
+            clicked = True
 
-        return True
+            device.screenshot()
+            if self._find_template(
+                device.image,
+                template,
+                area,
+                threshold=config.TEMPLATE_MATCH_THRESHOLD_CLICK,
+            ) is None:
+                return True
+
+        return clicked
 
     def click_teleport_to_enter(self, device, teleport_template_key: str | None = None) -> bool:
         """
@@ -176,15 +187,14 @@ class TreasuresLightwardNavigator:
                 clicked = False
                 for attempt in range(1, config.MAX_NAV_RETRY + 1):
                     logger.info(f"Teleport click attempt {attempt}/{config.MAX_NAV_RETRY}")
-                    device.screenshot()
-                    pos = self._find_template(
-                        device.image,
+                    pos = self._wait_for_template_position(
+                        device,
                         template,
                         area,
+                        timeout=config.RETRY_WAIT_INTERVAL,
                         threshold=config.TEMPLATE_MATCH_THRESHOLD_CLICK,
                     )
                     if pos is None:
-                        time.sleep(config.RETRY_WAIT_INTERVAL)
                         continue
 
                     self._click_position(device, pos)
@@ -215,7 +225,7 @@ class TreasuresLightwardNavigator:
         Args:
             device: Device 实例
             timeout: 最大等待时间（秒）
-            check_interval: 检查间隔（秒）
+            check_interval: 检查间隔（秒，基于截图节奏，无固定 sleep）
             stability_duration: 需要保持稳定的时长（秒）
 
         Returns:
@@ -261,7 +271,6 @@ class TreasuresLightwardNavigator:
                     stable_start = None
 
             prev_image = current_gray
-            time.sleep(check_interval)
 
         # 超时
         logger.warning(f"Screen stabilization timeout after {timeout}s")
@@ -315,8 +324,15 @@ class TreasuresLightwardNavigator:
             if click_pos is None:
                 logger.warning(f"Tab click button not found (attempt {attempt})")
                 if attempt < config.MAX_TAB_RETRY:
-                    time.sleep(config.RETRY_WAIT_INTERVAL)
-                    continue
+                    click_pos = self._wait_for_template_position(
+                        device,
+                        click_template,
+                        click_area,
+                        timeout=config.RETRY_WAIT_INTERVAL,
+                        threshold=config.TEMPLATE_MATCH_THRESHOLD_CLICK,
+                    )
+                    if click_pos is None:
+                        continue
                 else:
                     return False
 
@@ -324,9 +340,8 @@ class TreasuresLightwardNavigator:
             self._click_position(device, click_pos)
 
             # 等待并验证切换成功：检测 Nav 内容是否出现
-            max_verify_checks = 6  # 6 * 0.5s = 3 seconds max
-            for verify_attempt in range(max_verify_checks):
-                time.sleep(0.5)  # 等待动画
+            verify_timer = Timer(3.0).start()
+            while not verify_timer.reached():
                 device.screenshot()
 
                 # 验证：Nav 内容可见
@@ -381,8 +396,15 @@ class TreasuresLightwardNavigator:
             if click_pos is None:
                 logger.warning(f"Nav click button not found (attempt {attempt})")
                 if attempt < config.MAX_NAV_RETRY:
-                    time.sleep(config.RETRY_WAIT_INTERVAL)
-                    continue
+                    click_pos = self._wait_for_template_position(
+                        device,
+                        click_template,
+                        click_area,
+                        timeout=config.RETRY_WAIT_INTERVAL,
+                        threshold=config.TEMPLATE_MATCH_THRESHOLD_CLICK,
+                    )
+                    if click_pos is None:
+                        continue
                 else:
                     return False
 
@@ -390,7 +412,8 @@ class TreasuresLightwardNavigator:
             self._click_position(device, click_pos)
 
             # 等待动画完成
-            time.sleep(1.5)
+            if not self._wait_for_screen_stable(device, timeout=2.0, check_interval=0.3):
+                logger.warning("Nav selection did not stabilize, but continuing...")
 
             # 验证：点击后直接认为成功（check模板在不同Nav间相似度高，易误判）
             logger.info("Nav selection successful (clicked)")
@@ -426,12 +449,20 @@ class TreasuresLightwardNavigator:
             if click_pos is None:
                 logger.warning(f"Nav click button not found (attempt {attempt})")
                 if attempt < config.MAX_NAV_RETRY:
-                    time.sleep(config.RETRY_WAIT_INTERVAL)
-                    continue
+                    click_pos = self._wait_for_template_position(
+                        device,
+                        click_template,
+                        click_area,
+                        timeout=config.RETRY_WAIT_INTERVAL,
+                        threshold=config.TEMPLATE_MATCH_THRESHOLD_CLICK,
+                    )
+                    if click_pos is None:
+                        continue
                 return False
 
             self._click_position(device, click_pos)
-            time.sleep(1.5)
+            if not self._wait_for_screen_stable(device, timeout=2.0, check_interval=0.3):
+                logger.warning(f"{nav_name} nav did not stabilize, but continuing...")
 
             logger.info("Nav selection successful (clicked)")
             return True
@@ -447,6 +478,22 @@ class TreasuresLightwardNavigator:
     # =========================================================================
     # 内部辅助方法
     # =========================================================================
+
+    def _wait_for_template_position(
+        self,
+        device,
+        template: np.ndarray,
+        area: tuple,
+        timeout: float,
+        threshold: float,
+    ) -> Optional[Tuple[int, int]]:
+        timer = Timer(timeout).start()
+        while not timer.reached():
+            device.screenshot()
+            pos = self._find_template(device.image, template, area, threshold=threshold)
+            if pos is not None:
+                return pos
+        return None
 
     def _find_template(
         self,

@@ -135,8 +135,13 @@ class Button(Resource):
         res = cv2.matchTemplate(self.image, image, cv2.TM_CCOEFF_NORMED)
         _, sim, _, point = cv2.minMaxLoc(res)
 
-        self._button_offset = np.array(point) + self.search[:2] - self.area[:2]
-        return sim > similarity
+        # Only update offset when match succeeds; otherwise keep the previous offset.
+        # This prevents accidental offset pollution from failed matches (which can lead to mis-clicks
+        # when code clicks a button without a preceding successful appear()).
+        if sim > similarity:
+            self._button_offset = np.array(point) + self.search[:2] - self.area[:2]
+            return True
+        return False
 
     def match_template_luma(self, image, similarity=0.85, direct_match=False) -> bool:
         """
@@ -158,8 +163,10 @@ class Button(Resource):
         res = cv2.matchTemplate(self.image_luma, image, cv2.TM_CCOEFF_NORMED)
         _, sim, _, point = cv2.minMaxLoc(res)
 
-        self._button_offset = np.array(point) + self.search[:2] - self.area[:2]
-        return sim > similarity
+        if sim > similarity:
+            self._button_offset = np.array(point) + self.search[:2] - self.area[:2]
+            return True
+        return False
 
     def match_multi_template(self, image, similarity=0.85, direct_match=False):
         """

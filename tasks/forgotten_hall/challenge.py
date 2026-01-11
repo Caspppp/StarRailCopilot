@@ -9,7 +9,17 @@ from module.logger import logger
 from module.base.timer import Timer
 from tasks.forgotten_hall.ui import ForgottenHallUI
 from tasks.forgotten_hall.keywords import KEYWORDS_FORGOTTEN_HALL_STAGE
-from tasks.dungeon.keywords import KEYWORDS_DUNGEON_LIST, KEYWORDS_DUNGEON_NAV
+from tasks.forgotten_hall.challenge_modes.apocalyptic_shadow import MODE as APOCALYPTIC_SHADOW_MODE
+from tasks.forgotten_hall.challenge_modes.memory_of_chaos import MODE as MEMORY_OF_CHAOS_MODE
+from tasks.forgotten_hall.challenge_modes.pure_fiction import MODE as PURE_FICTION_MODE
+from tasks.forgotten_hall.challenge_modes.towering_citadel import MODE as TOWERING_CITADEL_MODE
+
+DUNGEON_MODES = {
+    MEMORY_OF_CHAOS_MODE.dungeon_type: MEMORY_OF_CHAOS_MODE,
+    TOWERING_CITADEL_MODE.dungeon_type: TOWERING_CITADEL_MODE,
+    PURE_FICTION_MODE.dungeon_type: PURE_FICTION_MODE,
+    APOCALYPTIC_SHADOW_MODE.dungeon_type: APOCALYPTIC_SHADOW_MODE,
+}
 
 
 class ForgottenHallChallenge(ForgottenHallUI):
@@ -24,27 +34,20 @@ class ForgottenHallChallenge(ForgottenHallUI):
     - 自动选关模式：扫描星数、自动升级/降级
     """
 
-    DUNGEON_TYPE_MAX_STAGE = {
-        'Memory_of_Chaos': 12,
-        'The_Last_Vestiges_of_Towering_Citadel': 15,
-        # 逐光捡金
-        'Pure_Fiction': 4,
-        'Apocalyptic_Shadow': 4,
-    }
+    def _get_mode(self, dungeon_type: str):
+        return DUNGEON_MODES.get(dungeon_type)
 
     def _get_max_stage(self, dungeon_type: str) -> int | None:
-        return self.DUNGEON_TYPE_MAX_STAGE.get(dungeon_type)
+        mode = self._get_mode(dungeon_type)
+        if mode is None:
+            return None
+        return mode.max_stage
 
     def _get_dungeon_display_name(self, dungeon_type: str) -> str:
-        if dungeon_type == 'Memory_of_Chaos':
-            return KEYWORDS_DUNGEON_LIST.Memory_of_Chaos.cn
-        if dungeon_type == 'The_Last_Vestiges_of_Towering_Citadel':
-            return KEYWORDS_DUNGEON_LIST.The_Last_Vestiges_of_Towering_Citadel.cn
-        if dungeon_type == 'Pure_Fiction':
-            return KEYWORDS_DUNGEON_NAV.Pure_Fiction.cn
-        if dungeon_type == 'Apocalyptic_Shadow':
-            return KEYWORDS_DUNGEON_NAV.Apocalyptic_Shadow.cn
-        return dungeon_type
+        mode = self._get_mode(dungeon_type)
+        if mode is None:
+            return dungeon_type
+        return mode.display_name
 
     def _get_selected_dungeon_types(self) -> list[str]:
         """
@@ -59,7 +62,7 @@ class ForgottenHallChallenge(ForgottenHallUI):
         if isinstance(dungeon_types, list) and dungeon_types:
             supported: list[str] = []
             for dungeon_type in dungeon_types:
-                if dungeon_type in self.DUNGEON_TYPE_MAX_STAGE:
+                if dungeon_type in DUNGEON_MODES:
                     supported.append(dungeon_type)
                 else:
                     logger.warning(f'Ignored unknown dungeon type in DungeonTypes: {dungeon_type}')
@@ -75,9 +78,36 @@ class ForgottenHallChallenge(ForgottenHallUI):
         except (TypeError, ValueError):
             return default
 
-    def _get_buff_config(self, key: str, default: int = 1) -> int:
+    def _get_buff_config(self, key: str, default: int = 1) -> int | str | list[str]:
+        """
+        Pure Fiction Buff 配置：支持数字选项（1/2/3）或 OCR 关键字（字符串/字符串列表）。
+        - int / 数字字符串：按选项编号选择
+        - 非数字字符串 / 字符串列表：按关键字匹配 Buff 文本后选择
+        """
         value = getattr(self.config, key, default)
-        return self._safe_int(value, default)
+        if value is None:
+            return 0
+
+        if isinstance(value, int):
+            return value
+
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return 0
+            if text.isdigit():
+                return int(text)
+            return text
+
+        if isinstance(value, list):
+            cleaned = [str(v).strip() for v in value if str(v).strip()]
+            return cleaned
+
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            text = str(value).strip()
+            return text if text else 0
 
     def run(self):
         """主执行方法"""
@@ -150,8 +180,8 @@ class ForgottenHallChallenge(ForgottenHallUI):
         stage_num: int,
         team1_preset: int,
         team2_preset: int,
-        team1_buff: int,
-        team2_buff: int,
+        team1_buff: int | str | list[str],
+        team2_buff: int | str | list[str],
     ) -> bool:
         max_stage = self._get_max_stage(dungeon_type)
         if max_stage is None:
@@ -207,8 +237,7 @@ class ForgottenHallChallenge(ForgottenHallUI):
                     logger.error(f'Battle 1 failed to engage enemy after {max_retries} retries')
                     break
 
-                logger.info(f'Waiting 2s before retry attempt {attempt + 1}')
-                self.device.sleep(2.0)
+                logger.info(f'Preparing retry attempt {attempt + 1}')
                 continue
 
             logger.info(f'Battle 1 Attempt {attempt}: Executing combat')
@@ -261,8 +290,7 @@ class ForgottenHallChallenge(ForgottenHallUI):
                     logger.error(f'Battle 1 failed after {max_retries} retries')
                     break
 
-                logger.info(f'Waiting 2s before retry attempt {attempt + 1}')
-                self.device.sleep(2.0)
+                logger.info(f'Preparing retry attempt {attempt + 1}')
                 continue
 
             logger.info(f'Battle 1 succeeded on attempt {attempt}/{max_retries}')
@@ -366,8 +394,7 @@ class ForgottenHallChallenge(ForgottenHallUI):
                 logger.error(f'Battle 2 failed after {max_retries} retries')
                 break
 
-            logger.info(f'Waiting 2s before retry attempt {attempt + 1}')
-            self.device.sleep(2.0)
+            logger.info(f'Preparing retry attempt {attempt + 1}')
 
             logger.info(f'Re-entering dungeon for Battle 2 retry attempt {attempt + 1}')
             self.enter_forgotten_hall_dungeon(skip_first_screenshot=False)
@@ -394,28 +421,9 @@ class ForgottenHallChallenge(ForgottenHallUI):
 
     def run_auto_selection(self, dungeon_type: str | None = None):
         """
-        自动选关挑战主流程（增强版：支持队伍调换和奖励领取）
-
-        流程：
-        1. 进入关卡选择界面
-        2. 检测并领取可用奖励
-        3. 扫描所有关卡星数
-        4. 确定起始关卡（最高未完成关卡）
-        5. 循环挑战：
-           - 成功(达目标星数) → 领取奖励 → 升级到下一关
-           - 失败/未达标：
-             - 向下探索阶段 → 降级
-             - 向上攀爬阶段 → 尝试队伍调换重试，调换后仍失败则停止任务
-        6. 终止条件：
-           - 最高关卡达成目标星数
-           - 降到最低关卡仍失败
-           - 向上攀爬时调换队伍后仍失败
-
-        Returns:
-            bool: 是否成功完成任务
+        自动选关入口，按深渊类型分发到对应模式逻辑。
         """
         try:
-            # 1. 读取配置
             dungeon_type = dungeon_type or self.config.ForgottenHallChallenge_DungeonType
             team1_preset = int(self.config.ForgottenHallChallenge_Team1Preset)
             team2_preset = int(self.config.ForgottenHallChallenge_Team2Preset)
@@ -424,213 +432,24 @@ class ForgottenHallChallenge(ForgottenHallUI):
             target_stars = int(getattr(self.config, 'ForgottenHallChallenge_TargetStars', 3))
             min_stage = int(getattr(self.config, 'ForgottenHallChallenge_MinStage', 1))
 
-            max_stage = self._get_max_stage(dungeon_type)
-            if max_stage is None:
+            mode = self._get_mode(dungeon_type)
+            if mode is None:
                 logger.error(f'Unknown dungeon type: {dungeon_type}')
                 return False
 
-            if dungeon_type == 'Pure_Fiction':
-                # 虚构叙事为固定页面 + 逐关解锁，不适用 STAGE_LIST OCR 的自动选关逻辑
-                return self.run_auto_pure_fiction(
-                    team1_preset=team1_preset,
-                    team2_preset=team2_preset,
-                    team1_buff=team1_buff,
-                    team2_buff=team2_buff,
-                )
-
-            if min_stage < 1:
-                min_stage = 1
-            if min_stage > max_stage:
-                logger.warning(f'MinStage {min_stage} > max_stage {max_stage}, clamp to {max_stage}')
-                min_stage = max_stage
-
-            logger.hr('Auto Stage Selection Mode', level=1)
-            logger.info(f'Dungeon: {self._get_dungeon_display_name(dungeon_type)}')
-            logger.info(f'Target stars: {target_stars}')
-            logger.info(f'Min stage: {min_stage}, Max stage: {max_stage}')
-            logger.info(f'Team1 Preset: {team1_preset}, Team2 Preset: {team2_preset}')
-            if dungeon_type == 'Pure_Fiction':
-                logger.info(f'Team1 Buff: {team1_buff}, Team2 Buff: {team2_buff}')
-
-            # 2. 进入关卡选择界面（不选择特定关卡，保持游戏默认定位）
-            if not self.goto_stage_selection_by_dungeon_type(dungeon_type):
-                logger.error('Failed to navigate to stage selection')
-                return False
-
-            # 2.1 首次进入时检测并领取奖励
-            self.check_and_claim_rewards(skip_first_screenshot=False)
-
-            # 3. 检测当前最高可挑战关卡（不需要滑动）
-            current_stage, stage_stars = self.detect_current_highest_stage(
-                max_stage=max_stage,
-                target_stars=target_stars
-            )
-
-            # 4. 检查是否已完成所有关卡
-            if current_stage == -1:
-                logger.hr('All Stages Completed!', level=1)
-                logger.info(f'All stages have reached {target_stars}+ stars')
-                return True
-
-            # 5. 状态变量：阶段和队伍调换
-            # phase: 'EXPLORING_DOWN' = 向下探索（新账号找能三星的关卡）
-            #        'CLIMBING_UP' = 向上攀爬（成功后继续挑战更高关卡）
-            phase = 'EXPLORING_DOWN'
-            team_swapped = False  # 当前关卡是否已调换队伍
-
-            logger.info(f'Initial phase: {phase}')
-
-            # 6. 主循环：挑战 -> 判断结果 -> 升级/降级/调换队伍
-            while True:
-                # 决定使用的队伍配置
-                if team_swapped:
-                    actual_team1, actual_team2 = team2_preset, team1_preset
-                    logger.info(f'Using SWAPPED teams: team1={actual_team1}, team2={actual_team2}')
-                else:
-                    actual_team1, actual_team2 = team1_preset, team2_preset
-
-                logger.hr(f'Auto Challenge Stage {current_stage} (Phase: {phase})', level=1)
-
-                # 挑战当前关卡
-                success, actual_stars = self._challenge_stage(
-                    dungeon_type=dungeon_type,
-                    stage_num=current_stage,
-                    team1_preset=actual_team1,
-                    team2_preset=actual_team2,
-                    team1_buff=team1_buff,
-                    team2_buff=team2_buff,
-                    target_stars=target_stars
-                )
-
-                if success:
-                    # 成功：领取奖励
-                    self.check_and_claim_rewards(skip_first_screenshot=False)
-
-                    # 检查是否完成任务
-                    if current_stage >= max_stage:
-                        logger.hr('All Stages Completed!', level=1)
-                        logger.info(f'Stage {max_stage} completed with {target_stars}+ stars')
-                        return True
-
-                    # 阶段转换：第一次成功时进入攀爬阶段
-                    if phase == 'EXPLORING_DOWN':
-                        phase = 'CLIMBING_UP'
-                        logger.info(f'Phase transition: EXPLORING_DOWN -> CLIMBING_UP at stage {current_stage}')
-
-                    # 升级到下一关，重置调换状态
-                    current_stage += 1
-                    team_swapped = False
-                    logger.info(f'Stage passed! Moving to stage {current_stage}')
-                else:
-                    # 失败或未达目标星数
-                    if phase == 'EXPLORING_DOWN':
-                        # 向下探索阶段：直接降级，不调换队伍
-                        if current_stage <= min_stage:
-                            logger.hr('Challenge Failed at Minimum Stage (Exploring)', level=1)
-                            logger.error(f'Failed at stage {current_stage} (min_stage={min_stage})')
-                            return False
-
-                        # 检查下一关卡是否已完成
-                        next_stage = current_stage - 1
-                        if next_stage in stage_stars and stage_stars[next_stage] >= target_stars:
-                            # 下一关已完成，不应降级，改为触发队伍调换
-                            logger.warning(f'Stage {current_stage} failed, but stage {next_stage} already has {target_stars}+ stars')
-                            if not team_swapped:
-                                team_swapped = True
-                                logger.warning(f'Cannot downgrade to completed stage {next_stage}, trying team swap instead')
-                                # 不改变 current_stage，下一轮用调换后的队伍重试当前关卡
-                            else:
-                                # 已调换仍失败：停止任务
-                                logger.hr('Challenge Failed After Team Swap', level=1)
-                                logger.error(f'Stage {current_stage} failed even with swapped teams, stopping task')
-                                return False
-                        else:
-                            # 正常降级逻辑（下一关未完成或不在字典中）
-                            current_stage -= 1
-                            team_swapped = False
-                            logger.info(f'Exploring down: falling back to stage {current_stage}')
-
-                    else:  # phase == 'CLIMBING_UP'
-                        # 向上攀爬阶段：尝试队伍调换
-                        if not team_swapped:
-                            # 首次失败：尝试调换队伍重新挑战同一关卡
-                            team_swapped = True
-                            logger.warning(f'Stage {current_stage} failed, trying team swap...')
-                            # 不改变 current_stage，下一轮会用调换后的队伍重新挑战
-                        else:
-                            # 已调换仍失败：停止任务
-                            logger.hr('Challenge Failed After Team Swap', level=1)
-                            logger.error(f'Stage {current_stage} failed even with swapped teams, stopping task')
-                            return False
-
-        except Exception as e:
-            logger.error(f'Auto selection challenge failed: {e}')
-            logger.exception(e)
-            return False
-
-    def run_auto_pure_fiction(
-        self,
-        team1_preset: int,
-        team2_preset: int,
-        team1_buff: int,
-        team2_buff: int,
-    ) -> bool:
-        """
-        虚构叙事自动闯关（固定页面，最多 4 关）。
-
-        规则（按用户定义）：
-        - 检测第 1 关是否有黄星；无则挑战第 1 关
-        - 若前一关有黄星，则挑战后一关（最多到第 4 关）
-        - 第 4 关也有黄星则任务完成
-        """
-        dungeon_type = 'Pure_Fiction'
-        target_stars = 1
-        max_stage = self._get_max_stage(dungeon_type) or 4
-
-        logger.hr('Auto Stage Selection Mode: Pure Fiction', level=1)
-        logger.info(f'Dungeon: {self._get_dungeon_display_name(dungeon_type)}')
-        logger.info(f'Target stars: {target_stars} (>=1 means cleared)')
-        logger.info(f'Max stage: {max_stage}')
-        logger.info(f'Team1 Preset: {team1_preset}, Team2 Preset: {team2_preset}')
-        logger.info(f'Team1 Buff: {team1_buff}, Team2 Buff: {team2_buff}')
-
-        if not self.goto_stage_selection_by_dungeon_type(dungeon_type):
-            logger.error('Failed to navigate to stage selection')
-            return False
-
-        # 进入后先尝试领取一次奖励（若不存在会直接返回 False，不影响）
-        self.check_and_claim_rewards(skip_first_screenshot=False)
-
-        while True:
-            next_stage, stage_stars = self.pure_fiction_next_stage_to_challenge()
-
-            if next_stage == -1:
-                logger.hr('All Stages Completed!', level=1)
-                logger.info('Pure Fiction: all 4 stages have yellow stars')
-                return True
-
-            if next_stage < 1 or next_stage > max_stage:
-                logger.error(f'Invalid next stage: {next_stage} (max={max_stage}), stage_stars={stage_stars}')
-                return False
-
-            logger.hr(f'Auto Challenge Pure Fiction Stage {next_stage}', level=1)
-            logger.info(f'[PureFiction] Stage stars snapshot: {stage_stars}')
-
-            success, actual_stars = self._challenge_stage(
-                dungeon_type=dungeon_type,
-                stage_num=next_stage,
+            return mode.run_auto_selection(
+                self,
                 team1_preset=team1_preset,
                 team2_preset=team2_preset,
                 team1_buff=team1_buff,
                 team2_buff=team2_buff,
                 target_stars=target_stars,
+                min_stage=min_stage,
             )
-
-            if not success:
-                logger.error(f'Pure Fiction stage {next_stage} failed or did not reach target stars: {actual_stars}')
-                return False
-
-            self.check_and_claim_rewards(skip_first_screenshot=False)
+        except Exception as e:
+            logger.error(f'Auto selection challenge failed: {e}')
+            logger.exception(e)
+            return False
 
     def _challenge_stage(
         self,
@@ -638,8 +457,8 @@ class ForgottenHallChallenge(ForgottenHallUI):
         stage_num: int,
         team1_preset: int,
         team2_preset: int,
-        team1_buff: int,
-        team2_buff: int,
+        team1_buff: int | str | list[str],
+        team2_buff: int | str | list[str],
         target_stars: int = 3,
     ) -> tuple:
         """
@@ -680,6 +499,7 @@ class ForgottenHallChallenge(ForgottenHallUI):
         from tasks.combat.assets.assets_combat_finish import COMBAT_AGAIN
         from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import RETURN_TO_FORGOTTEN_HALL
         from tasks.base.assets.assets_base_page import FORGOTTEN_HALL_CHECK
+        from tasks.forgotten_hall.assets.assets_pure_fiction_ui import PURE_FICTION_RETURN
 
         logger.hr('Battle 1: Upper Half', level=2)
 
@@ -707,6 +527,8 @@ class ForgottenHallChallenge(ForgottenHallUI):
             if self.appear(RETURN_TO_FORGOTTEN_HALL, interval=0.5):
                 return True
             if self.appear(COMBAT_AGAIN, interval=0.5):
+                return True
+            if self.appear(PURE_FICTION_RETURN, interval=0.5):
                 return True
             if self.appear(FORGOTTEN_HALL_CHECK, interval=0.5):
                 return True
@@ -736,6 +558,7 @@ class ForgottenHallChallenge(ForgottenHallUI):
         from tasks.combat.assets.assets_combat_finish import COMBAT_AGAIN
         from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import RETURN_TO_FORGOTTEN_HALL
         from tasks.base.assets.assets_base_page import FORGOTTEN_HALL_CHECK
+        from tasks.forgotten_hall.assets.assets_pure_fiction_ui import PURE_FICTION_RETURN
 
         def is_battle_end():
             if not hasattr(self, '_battle_end_stuck_timer'):
@@ -750,6 +573,8 @@ class ForgottenHallChallenge(ForgottenHallUI):
             if self.appear(RETURN_TO_FORGOTTEN_HALL, interval=0.5):
                 return True
             if self.appear(COMBAT_AGAIN, interval=0.5):
+                return True
+            if self.appear(PURE_FICTION_RETURN, interval=0.5):
                 return True
             if self.appear(FORGOTTEN_HALL_CHECK, interval=0.5):
                 return True
@@ -768,17 +593,11 @@ class ForgottenHallChallenge(ForgottenHallUI):
         logger.info('Battle 2 succeeded')
         self.handle_battle_success()
 
-        # 获取实际星数
-        if dungeon_type == 'Pure_Fiction':
-            # 虚构叙事：固定页面黄星可能需要短暂刷新，做一次小轮询
-            actual_stars = 0
-            for _ in range(6):
-                actual_stars = self.pure_fiction_get_stage_star_count(stage_num)
-                if actual_stars >= target_stars:
-                    break
-                self.device.sleep(0.8)
-        else:
+        mode = self._get_mode(dungeon_type)
+        if mode is None:
             actual_stars = self.get_stage_star_count(stage_num)
+        else:
+            actual_stars = mode.get_stage_star_count(self, stage_num, target_stars)
         if actual_stars < 0:
             actual_stars = 0
 

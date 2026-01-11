@@ -58,6 +58,7 @@ class ForgottenHallTeam(UI):
         self.interval_clear(ENTRANCE_CHECKED)
         characters = [CHARACTER_1, CHARACTER_2, CHARACTER_3, CHARACTER_4]
         seats = [SEAT_1, SEAT_2, SEAT_3, SEAT_4]
+        click_interval = Timer(0.2)
         while 1:
             if skip_first_screenshot:
                 skip_first_screenshot = False
@@ -74,10 +75,10 @@ class ForgottenHallTeam(UI):
                 break
             if self.appear(ENTRANCE_CHECKED, interval=2):
                 for character, chosen in zip(characters, chosen_list):
-                    if not chosen:
+                    if not chosen and click_interval.reached():
                         self.device.click(character)
-                        # Casual sleep, game may not respond that fast
-                        self.device.sleep((0.1, 0.2))
+                        click_interval.reset()
+                        break
 
     def team_is_prepared(self, skip_first_screenshot=True) -> bool:
         """

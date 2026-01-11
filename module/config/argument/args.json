@@ -2507,6 +2507,24 @@
           12
         ]
       },
+      "Team1Buff": {
+        "type": "input",
+        "value": "",
+        "option": [
+          "击破",
+          "忆灵"
+        ],
+        "placeholder": "击破/忆灵"
+      },
+      "Team2Buff": {
+        "type": "input",
+        "value": "",
+        "option": [
+          "击破",
+          "忆灵"
+        ],
+        "placeholder": "击破/忆灵"
+      },
       "AutoStageSelection": {
         "type": "checkbox",
         "value": true,

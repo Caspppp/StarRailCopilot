@@ -2,6 +2,8 @@ import cv2
 import numpy as np
 import os
 import time
+from dataclasses import dataclass
+import re
 from pponnxcr.predict_system import BoxedResult
 
 from module.base.base import ModuleBase
@@ -17,7 +19,24 @@ from tasks.base.page import page_guide
 from tasks.dungeon.keywords import DungeonList, KEYWORDS_DUNGEON_LIST, KEYWORDS_DUNGEON_NAV, KEYWORDS_DUNGEON_TAB
 from tasks.dungeon.ui.ui import DungeonUI
 from tasks.forgotten_hall.assets.assets_forgotten_hall_nav import *
+from tasks.forgotten_hall.assets.assets_forgotten_hall_team import (
+    CHARACTER_1,
+    CHARACTER_2,
+    CHARACTER_3,
+    CHARACTER_4,
+)
 from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import *
+from tasks.forgotten_hall.assets.assets_pure_fiction_ui import (
+    PURE_FICTION_CLEAR_ICON,
+    PURE_FICTION_ENTER_STORY,
+    PURE_FICTION_PRESET_ICON,
+    PURE_FICTION_PRESET_TAB_SELECTED,
+    PURE_FICTION_PRESET_TAB_UNSELECTED,
+    PURE_FICTION_RETURN,
+    PURE_FICTION_ROW1_EMPTY,
+    PURE_FICTION_ROW2_EMPTY,
+)
+from tasks.forgotten_hall.assets.assets_stage_selection_ui import STAGE_REWARD_BUTTON_LOWER
 from tasks.forgotten_hall.keywords import ForgottenHallStage, KEYWORDS_FORGOTTEN_HALL_STAGE
 from tasks.forgotten_hall.team import ForgottenHallTeam
 from tasks.map.control.control import MapControl
@@ -642,6 +661,22 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
     PURE_FICTION_STAR_MIN_PIXELS = 8
     PURE_FICTION_BUFF_OPTION_AREA = (543, 106, 1253, 633)
     PURE_FICTION_BUFF_OPTION_COUNT = 3
+    PURE_FICTION_BUFF_RING_COL_RATIO = 0.28  # Search left part of option area for rings
+    PURE_FICTION_BUFF_RING_HSV_LOWER = (10, 35, 120)
+    PURE_FICTION_BUFF_RING_HSV_UPPER = (35, 255, 255)
+    PURE_FICTION_BUFF_BORDER_BGR = (124, 122, 116)  # rgb(116,122,124)
+    PURE_FICTION_BUFF_BORDER_TOLERANCE = 20
+    PURE_FICTION_BUFF_SCROLLBAR_ROI = (1256, 116, 1261, 609)
+    PURE_FICTION_BUFF_SELECTED_ROI = (251, 148, 304, 196)
+    PURE_FICTION_BUFF_SELECTED_LUMA_WHITE = 70.0
+    PURE_FICTION_BUFF_SELECTED_LUMA_DELTA = 20.0
+    FORGOTTEN_HALL_CLICK_BLANK_PROMPT_ROI = (565, 620, 713, 642)
+    FORGOTTEN_HALL_CLICK_BLANK_PROMPT_ROI_LUMA_MIN = 90.0
+    FORGOTTEN_HALL_CLICK_BLANK_PROMPT_ROI_BRIGHT_THRESHOLD = 220
+    FORGOTTEN_HALL_CLICK_BLANK_PROMPT_ROI_BRIGHT_RATIO_MIN = 0.05
+    # Click an area that is outside the info panel (avoid clicking on the card itself).
+    # Bottom-right corner is usually empty and avoids UI elements like UID/back buttons.
+    FORGOTTEN_HALL_CLICK_BLANK_SAFE_AREA = (1200, 680, 1270, 720)
 
     APOCALYPTIC_SHADOW_STAGE_BUTTON_AREA = (177, 626, 1102, 662)
     APOCALYPTIC_SHADOW_STAGE_COUNT = 4
@@ -697,7 +732,591 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
             cur_y = seg_y2
         return areas
 
+    @dataclass(frozen=True)
+    class _PureFictionCard:
+        area: tuple[int, int, int, int]
+        bottom_closed: bool
+
+        @property
+        def center(self) -> tuple[int, int]:
+            x1, y1, x2, y2 = self.area
+            return ((x1 + x2) // 2, (y1 + y2) // 2)
+
+    @dataclass(frozen=True)
+    class _LineCluster:
+        start: int
+        end: int
+
+        @property
+        def center(self) -> int:
+            return (self.start + self.end) // 2
+
+        @property
+        def thickness(self) -> int:
+            return self.end - self.start + 1
+
+    @staticmethod
+    def _scale_from_image(image: np.ndarray, base_w: int = 1280, base_h: int = 720) -> float:
+        h, w = image.shape[:2]
+        if w <= 0 or h <= 0:
+            return 1.0
+        return min(w / base_w, h / base_h)
+
+    @staticmethod
+    def _scale_area(area: tuple[int, int, int, int], scale: float) -> tuple[int, int, int, int]:
+        if scale == 1.0:
+            return area
+        x1, y1, x2, y2 = area
+        return (
+            int(round(x1 * scale)),
+            int(round(y1 * scale)),
+            int(round(x2 * scale)),
+            int(round(y2 * scale)),
+        )
+
+    @staticmethod
+    def _chebyshev_color_mask(image_bgr: np.ndarray, target_bgr: tuple[int, int, int], tolerance: int) -> np.ndarray:
+        target = np.array(target_bgr, dtype=np.int16)
+        diff = np.abs(image_bgr.astype(np.int16) - target)
+        dist = diff.max(axis=2)
+        return (dist <= tolerance).astype(np.uint8) * 255
+
+    def _pure_fiction_selected_luma(self, image: np.ndarray) -> float:
+        scale = self._scale_from_image(image)
+        x1, y1, x2, y2 = self._scale_area(self.PURE_FICTION_BUFF_SELECTED_ROI, scale)
+        h, w = image.shape[:2]
+        x1, y1, x2, y2 = max(0, x1), max(0, y1), min(w, x2), min(h, y2)
+        if x2 <= x1 or y2 <= y1:
+            return 0.0
+        crop_img = image[y1:y2, x1:x2]
+        gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
+        return float(gray.mean())
+
+    def _pure_fiction_is_buff_selected(self, image: np.ndarray, before_luma: float | None = None) -> bool:
+        after_luma = self._pure_fiction_selected_luma(image)
+        if after_luma >= self.PURE_FICTION_BUFF_SELECTED_LUMA_WHITE:
+            return True
+        if before_luma is None:
+            return False
+        return after_luma >= before_luma + self.PURE_FICTION_BUFF_SELECTED_LUMA_DELTA
+
+    def _luma_mean(self, image: np.ndarray, area: tuple[int, int, int, int] | None = None) -> float:
+        if not isinstance(image, np.ndarray) or image.size == 0:
+            return 0.0
+        if area is None:
+            crop_img = image
+        else:
+            x1, y1, x2, y2 = area
+            h, w = image.shape[:2]
+            x1, y1, x2, y2 = max(0, x1), max(0, y1), min(w, x2), min(h, y2)
+            if x2 <= x1 or y2 <= y1:
+                return 0.0
+            crop_img = image[y1:y2, x1:x2]
+        gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
+        return float(gray.mean())
+
+    def _has_forgotten_hall_click_blank_prompt(self, image: np.ndarray) -> bool:
+        scale = self._scale_from_image(image)
+        roi = self._scale_area(self.FORGOTTEN_HALL_CLICK_BLANK_PROMPT_ROI, scale)
+        x1, y1, x2, y2 = roi
+        h, w = image.shape[:2]
+        x1, y1, x2, y2 = max(0, x1), max(0, y1), min(w, x2), min(h, y2)
+        if x2 <= x1 or y2 <= y1:
+            return False
+
+        crop_img = image[y1:y2, x1:x2]
+        gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
+        roi_luma = float(gray.mean())
+        bright_ratio = float((gray >= self.FORGOTTEN_HALL_CLICK_BLANK_PROMPT_ROI_BRIGHT_THRESHOLD).mean())
+        return (
+            roi_luma >= self.FORGOTTEN_HALL_CLICK_BLANK_PROMPT_ROI_LUMA_MIN
+            and bright_ratio >= self.FORGOTTEN_HALL_CLICK_BLANK_PROMPT_ROI_BRIGHT_RATIO_MIN
+        )
+
+    def _handle_forgotten_hall_click_blank_prompt(self, interval: float = 0.8) -> bool:
+        from module.base.button import ClickButton
+
+        interval_key = "FORGOTTEN_HALL_CLICK_BLANK_PROMPT"
+        if interval and not self.interval_is_reached(interval_key, interval=interval):
+            return False
+
+        image = getattr(self.device, "image", None)
+        if not isinstance(image, np.ndarray) or image.size == 0:
+            return False
+
+        if not self._has_forgotten_hall_click_blank_prompt(image):
+            return False
+
+        scale = self._scale_from_image(image)
+        blank_area = self._scale_area(self.FORGOTTEN_HALL_CLICK_BLANK_SAFE_AREA, scale)
+        blank = ClickButton(area=blank_area, name="FORGOTTEN_HALL_CLICK_BLANK_PROMPT")
+        logger.info("[ForgottenHall] Click blank to dismiss prompt")
+        self.device.click(blank)
+
+        if interval:
+            self.interval_reset(interval_key, interval=interval)
+        return True
+
+    @classmethod
+    def _find_clusters_1d(cls, indices: np.ndarray) -> list["_LineCluster"]:
+        if indices.size == 0:
+            return []
+        indices = np.asarray(indices, dtype=np.int32)
+        clusters: list[ForgottenHallUI._LineCluster] = []
+        start = int(indices[0])
+        prev = int(indices[0])
+        for v in indices[1:]:
+            v = int(v)
+            if v == prev + 1:
+                prev = v
+                continue
+            clusters.append(cls._LineCluster(start=start, end=prev))
+            start = v
+            prev = v
+        clusters.append(cls._LineCluster(start=start, end=prev))
+        return clusters
+
+    def _detect_pure_fiction_buff_cards(self, image: np.ndarray) -> list["_PureFictionCard"]:
+        """
+        Detect buff option card rectangles using the grey border lines.
+
+        Returns:
+            list[_PureFictionCard]: Sorted by y from top to bottom.
+        """
+        scale = self._scale_from_image(image)
+        x1, y1, x2, y2 = self.PURE_FICTION_BUFF_OPTION_AREA
+        h, w = image.shape[:2]
+        x1, y1, x2, y2 = max(0, x1), max(0, y1), min(w, x2), min(h, y2)
+        if x2 <= x1 or y2 <= y1:
+            return []
+
+        crop_img = image[y1:y2, x1:x2]
+        mask = self._chebyshev_color_mask(
+            crop_img,
+            target_bgr=self.PURE_FICTION_BUFF_BORDER_BGR,
+            tolerance=self.PURE_FICTION_BUFF_BORDER_TOLERANCE,
+        )
+
+        k3 = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k3, iterations=1)
+
+        horizontal_kernel_len = max(80, int(round(220 * scale)))
+        vertical_kernel_len = max(60, int(round(120 * scale)))
+
+        h_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (horizontal_kernel_len, 1))
+        v_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, vertical_kernel_len))
+        h_lines = cv2.morphologyEx(mask, cv2.MORPH_OPEN, h_kernel, iterations=1)
+        v_lines = cv2.morphologyEx(mask, cv2.MORPH_OPEN, v_kernel, iterations=1)
+
+        crop_h, crop_w = h_lines.shape[:2]
+        row_counts = np.count_nonzero(h_lines, axis=1)
+        rows = np.where(row_counts >= int(crop_w * 0.60))[0]
+        horizontal_clusters = sorted(self._find_clusters_1d(rows), key=lambda c: c.center)
+
+        col_counts = np.count_nonzero(v_lines, axis=0)
+        cols = np.where(col_counts >= int(crop_h * 0.25))[0]
+        vertical_clusters = sorted(self._find_clusters_1d(cols), key=lambda c: c.center)
+
+        if len(horizontal_clusters) < 3:
+            return []
+
+        # Derive 3 card y ranges from horizontal lines.
+        pair_gap_max = max(24, int(round(50 * scale)))
+        expected_cards = self.PURE_FICTION_BUFF_OPTION_COUNT
+
+        tops: list[int] = [horizontal_clusters[0].center]
+        bottoms: list[int] = []
+        i = 1
+        while i < len(horizontal_clusters) and len(bottoms) < expected_cards:
+            bottoms.append(horizontal_clusters[i].center)
+
+            if len(tops) >= expected_cards:
+                i += 1
+                continue
+
+            if i + 1 < len(horizontal_clusters) and (horizontal_clusters[i + 1].center - horizontal_clusters[i].center) <= pair_gap_max:
+                tops.append(horizontal_clusters[i + 1].center)
+                i += 2
+            else:
+                i += 1
+
+        if len(tops) != expected_cards:
+            return []
+
+        left = 0
+        right = crop_w - 1
+        if len(vertical_clusters) >= 2:
+            left = min(vertical_clusters[0].center, vertical_clusters[-1].center)
+            right = max(vertical_clusters[0].center, vertical_clusters[-1].center)
+            left = min(max(0, left + 2), crop_w - 1)
+            right = min(max(0, right - 2), crop_w - 1)
+
+        cards: list[ForgottenHallUI._PureFictionCard] = []
+        for idx in range(expected_cards):
+            top = tops[idx]
+            if idx < len(bottoms):
+                bottom = bottoms[idx]
+                bottom_closed = True
+            else:
+                bottom = crop_h - 1
+                bottom_closed = False
+
+            if bottom <= top:
+                return []
+
+            area = (x1 + left, y1 + top, x1 + right, y1 + bottom)
+            cards.append(self._PureFictionCard(area=area, bottom_closed=bottom_closed))
+
+        cards.sort(key=lambda c: c.center[1])
+        return cards
+
+    def _detect_pure_fiction_buff_rings(self, image: np.ndarray) -> list[tuple[int, int, int]]:
+        """
+        Detect yellow rings (icon circles) for buff options.
+
+        Returns:
+            list[(x, y, r)]: Ring circles in global coordinates, sorted by y.
+        """
+        scale = self._scale_from_image(image)
+        x1, y1, x2, y2 = self.PURE_FICTION_BUFF_OPTION_AREA
+        h, w = image.shape[:2]
+        x1, y1, x2, y2 = max(0, x1), max(0, y1), min(w, x2), min(h, y2)
+        if x2 <= x1 or y2 <= y1:
+            return []
+
+        ring_col_w = int(round((x2 - x1) * self.PURE_FICTION_BUFF_RING_COL_RATIO))
+        ring_x1 = x1
+        ring_x2 = min(x2, x1 + max(120, ring_col_w))
+        padding = max(12, int(round(24 * scale)))
+        ring_x1 = max(0, ring_x1 - padding)
+        ring_y1 = max(0, y1 - padding)
+        ring_x2 = min(w, ring_x2 + padding)
+        ring_y2 = min(h, y2 + padding)
+
+        if ring_x2 <= ring_x1 or ring_y2 <= ring_y1:
+            return []
+
+        crop_img = image[ring_y1:ring_y2, ring_x1:ring_x2]
+        hsv = cv2.cvtColor(crop_img, cv2.COLOR_BGR2HSV)
+        lower = np.array(self.PURE_FICTION_BUFF_RING_HSV_LOWER, dtype=np.uint8)
+        upper = np.array(self.PURE_FICTION_BUFF_RING_HSV_UPPER, dtype=np.uint8)
+        mask = cv2.inRange(hsv, lower, upper)
+
+        # Mild close/dilate to bridge anti-alias gaps but avoid breaking thin rings.
+        k3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        k5 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k5, iterations=1)
+        mask = cv2.dilate(mask, k3, iterations=1)
+
+        blurred = cv2.GaussianBlur(mask, (7, 7), 0)
+        min_radius = max(8, int(round(22 * scale)))
+        max_radius = max(min_radius + 2, int(round(40 * scale)))
+        min_dist = max(16, int(round(90 * scale)))
+
+        circles = cv2.HoughCircles(
+            blurred,
+            cv2.HOUGH_GRADIENT,
+            dp=1.2,
+            minDist=min_dist,
+            param1=120,
+            param2=14,
+            minRadius=min_radius,
+            maxRadius=max_radius,
+        )
+
+        detected: list[tuple[int, int, int]] = []
+        if circles is not None and len(circles) > 0:
+            circles = np.asarray(np.around(circles), dtype=np.int32).squeeze(0)
+            for cx, cy, r in circles:
+                detected.append((int(ring_x1 + cx), int(ring_y1 + cy), int(r)))
+
+        detected.sort(key=lambda t: t[1])
+        return detected
+
+    def _get_pure_fiction_buff_scroll_thumb(self, image) -> tuple[bool, int, int, int, int]:
+        """
+        检测虚构叙事 Buff 选择面板的滚动条滑块位置。
+
+        Returns:
+            (valid, y_top, y_bottom, track_top, track_bottom)
+        """
+        x1, y1, x2, y2 = self.PURE_FICTION_BUFF_SCROLLBAR_ROI
+        crop_img = image[y1:y2, x1:x2]
+        if crop_img.size == 0:
+            return (False, 0, 0, y1, y2)
+
+        gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
+        _, bin_img = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+
+        row_sum = bin_img.sum(axis=1)
+        height = row_sum.shape[0]
+
+        max_len = 0
+        best = (0, 0)
+        run_len = 0
+        run_start = 0
+        for i in range(height):
+            if row_sum[i] > 0:
+                if run_len == 0:
+                    run_start = i
+                run_len += 1
+            else:
+                if run_len > max_len:
+                    max_len = run_len
+                    best = (run_start, i - 1)
+                run_len = 0
+
+        if run_len > max_len:
+            max_len = run_len
+            best = (run_start, height - 1)
+
+        if max_len < 6:
+            return (False, 0, 0, y1, y2)
+
+        y_top = y1 + best[0]
+        y_bottom = y1 + best[1]
+        return (True, y_top, y_bottom, y1, y2)
+
+    def _drag_pure_fiction_buff_scroll_to_bottom(self, timeout: float = 2.0) -> bool:
+        """
+        当 buff 卡片超出可见范围时，将滚动条拖动到最底部。
+
+        Returns:
+            bool: 是否执行了拖动（有滚动条才会拖动）
+        """
+        self.device.screenshot()
+        valid, y_top, y_bot, t_top, t_bot = self._get_pure_fiction_buff_scroll_thumb(self.device.image)
+        x1, y1, x2, y2 = self.PURE_FICTION_BUFF_SCROLLBAR_ROI
+        cx = (x1 + x2) // 2
+
+        if not valid:
+            # 若未能检测到滑块，仍尝试在轨道区域做一次拖动（兼容极端皮肤/亮度差异）
+            logger.warning('[PureFiction] No scrollbar thumb detected, try fallback drag')
+            self.device.drag((cx, y1 + 8), (cx, y2 - 8), name='PURE_FICTION_BUFF_SCROLL_FALLBACK')
+            return True
+
+        thumb_h = float(y_bot - y_top + 1)
+        cy_now = int((y_top + y_bot) / 2)
+        cy_target = int(t_bot - thumb_h / 2.0 - 2)
+        cy_target = max(t_top + 2, min(t_bot - 2, cy_target))
+
+        logger.info(f'[PureFiction] Drag buff scrollbar to bottom: {cy_now} -> {cy_target}')
+        self.device.drag((cx, cy_now), (cx, cy_target), name='PURE_FICTION_BUFF_SCROLL_TO_BOTTOM')
+
+        stable_timer = Timer(timeout).start()
+        last_pos = None
+        stable_count = 0
+        while not stable_timer.reached():
+            self.device.screenshot()
+            valid_now, y_top_now, y_bot_now, _, _ = self._get_pure_fiction_buff_scroll_thumb(self.device.image)
+            if not valid_now:
+                continue
+            pos = (y_top_now, y_bot_now)
+            if pos == last_pos:
+                stable_count += 1
+                if stable_count >= 2:
+                    break
+            else:
+                stable_count = 0
+                last_pos = pos
+
+        return True
+
+    @staticmethod
+    def _pure_fiction_split_keywords(value) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return []
+            parts = [p.strip() for p in re.split(r"[|,，;；]+", text) if p.strip()]
+            return parts if parts else [text]
+        if isinstance(value, list):
+            return [str(v).strip() for v in value if str(v).strip()]
+        return [str(value).strip()] if str(value).strip() else []
+
+    def _pure_fiction_ocr_text(self, image: np.ndarray, area: tuple[int, int, int, int]) -> str:
+        from module.ocr.models import OCR_MODEL
+        from module.ocr.utils import merge_buttons
+        from module.base.utils import corner2area
+        import module.config.server as server
+
+        x1, y1, x2, y2 = area
+        h, w = image.shape[:2]
+        x1 = max(0, min(w, x1))
+        x2 = max(0, min(w, x2))
+        y1 = max(0, min(h, y1))
+        y2 = max(0, min(h, y2))
+        if x2 <= x1 or y2 <= y1:
+            return ""
+
+        crop_img = image[y1:y2, x1:x2]
+        try:
+            model = OCR_MODEL.get_by_lang(server.lang)
+            results = model.detect_and_ocr(crop_img)
+        except Exception as e:
+            logger.warning(f'[PureFiction] OCR failed: {e}')
+            return ""
+        for result in results:
+            result.box = tuple(corner2area(result.box))
+        results = merge_buttons(results, thres_x=20, thres_y=20)
+        results.sort(key=lambda r: (r.box[1], r.box[0]))
+        return "\n".join([r.ocr_text for r in results]).strip()
+
+    def _select_pure_fiction_buff_option_by_keyword(self, keyword) -> bool:
+        """
+        在 Buff 三选一面板中，根据 OCR 文本关键字选择对应 Buff。
+
+        Args:
+            keyword: str | list[str]
+
+        Returns:
+            bool: 是否已点击一个 Buff 选项
+        """
+        keywords = self._pure_fiction_split_keywords(keyword)
+        if not keywords:
+            logger.info('[PureFiction] No keyword provided, fallback to random selection')
+            return self._select_pure_fiction_buff_option(1)
+
+        self.device.screenshot()
+        image = self.device.image
+
+        cards = self._detect_pure_fiction_buff_cards(image)
+        if len(cards) == self.PURE_FICTION_BUFF_OPTION_COUNT and any(not c.bottom_closed for c in cards):
+            self._drag_pure_fiction_buff_scroll_to_bottom()
+            self.device.screenshot()
+            image = self.device.image
+            cards = self._detect_pure_fiction_buff_cards(image)
+
+        rings = self._detect_pure_fiction_buff_rings(image)
+        scale = self._scale_from_image(image)
+        click_radius = max(6, int(round(6 * scale)))
+        click_dx = max(40, int(round(120 * scale)))
+
+        candidates: list[tuple[int, tuple[int, int, int, int], str]] = []
+        if len(cards) == self.PURE_FICTION_BUFF_OPTION_COUNT:
+            for idx, card in enumerate(sorted(cards, key=lambda c: c.center[1]), start=1):
+                card_x1, card_y1, card_x2, card_y2 = card.area
+                ring_in_card = [r for r in rings if card_x1 <= r[0] <= card_x2 and card_y1 <= r[1] <= card_y2]
+
+                pad_x = max(6, int(round(12 * scale)))
+                pad_y = max(6, int(round(10 * scale)))
+                if len(ring_in_card) == 1:
+                    ring_x, ring_y, ring_r = ring_in_card[0]
+                    ocr_x1 = ring_x + ring_r + max(10, int(round(16 * scale)))
+                    click_x = min(card_x2 - click_radius, max(card_x1 + click_radius, ring_x + click_dx))
+                    click_y = min(card_y2 - click_radius, max(card_y1 + click_radius, ring_y))
+                else:
+                    # Fallback: exclude left ~25% area
+                    ocr_x1 = card_x1 + int(round((card_x2 - card_x1) * 0.25))
+                    click_x, click_y = card.center
+
+                ocr_area = (
+                    int(min(card_x2 - pad_x, max(card_x1 + pad_x, ocr_x1))),
+                    int(card_y1 + pad_y),
+                    int(card_x2 - pad_x),
+                    int(card_y2 - pad_y),
+                )
+                text = self._pure_fiction_ocr_text(image, ocr_area)
+                click_area = (
+                    int(click_x - click_radius),
+                    int(click_y - click_radius),
+                    int(click_x + click_radius),
+                    int(click_y + click_radius),
+                )
+                candidates.append((idx, click_area, text))
+        else:
+            # Fallback: fixed split (may be less robust when card heights change)
+            raw_areas = self._split_area_vertically(self.PURE_FICTION_BUFF_OPTION_AREA, self.PURE_FICTION_BUFF_OPTION_COUNT)
+            for idx, (ax1, ay1, ax2, ay2) in enumerate(raw_areas, start=1):
+                pad_x = max(6, int(round(12 * scale)))
+                pad_y = max(6, int(round(10 * scale)))
+                ocr_x1 = ax1 + int(round((ax2 - ax1) * 0.25))
+                ocr_area = (ocr_x1, ay1 + pad_y, ax2 - pad_x, ay2 - pad_y)
+                text = self._pure_fiction_ocr_text(image, ocr_area)
+                cx, cy = self._area_center((ax1, ay1, ax2, ay2))
+                click_area = (cx - click_radius, cy - click_radius, cx + click_radius, cy + click_radius)
+                candidates.append((idx, click_area, text))
+
+        normalized_candidates: list[tuple[int, str]] = []
+        for idx, _, text in candidates:
+            normalized_candidates.append((idx, re.sub(r"\\s+", "", text)))
+            logger.attr(f'[PureFiction] Buff option #{idx} OCR', text=text)
+
+        chosen_idx = 1
+        if keywords:
+            normalized_keywords = [re.sub(r"\\s+", "", k) for k in keywords if k.strip()]
+            for idx, text in normalized_candidates:
+                if any(k and k in text for k in normalized_keywords):
+                    chosen_idx = idx
+                    break
+
+        from module.base.button import ClickButton
+
+        click_area = None
+        for idx, area, _ in candidates:
+            if idx == chosen_idx:
+                click_area = area
+                break
+        if click_area is None:
+            return False
+
+        click_button = ClickButton(area=click_area, name=f'PureFictionBuffKw_{chosen_idx}')
+        logger.info(f'[PureFiction] Select buff option {chosen_idx} by keyword')
+        self.device.click(click_button)
+        return True
+
     def _get_pure_fiction_buff_option_areas(self) -> dict[int, tuple[int, int, int, int]]:
+        """
+        Get clickable areas for the 3 buff options.
+
+        Prefer dynamic detection using rectangle borders + ring validation. Fallback to the
+        legacy fixed split when detection fails.
+        """
+        image = getattr(self.device, "image", None)
+        if isinstance(image, np.ndarray) and image.size > 0:
+            cards = self._detect_pure_fiction_buff_cards(image)
+            if len(cards) == self.PURE_FICTION_BUFF_OPTION_COUNT:
+                if any(not c.bottom_closed for c in cards):
+                    self._drag_pure_fiction_buff_scroll_to_bottom()
+                    self.device.screenshot()
+                    image = self.device.image
+                    cards = self._detect_pure_fiction_buff_cards(image)
+                    if len(cards) != self.PURE_FICTION_BUFF_OPTION_COUNT:
+                        cards = []
+
+                rings = self._detect_pure_fiction_buff_rings(image)
+                scale = self._scale_from_image(image)
+                click_radius = max(6, int(round(6 * scale)))
+                click_dx = max(40, int(round(120 * scale)))
+
+                areas: dict[int, tuple[int, int, int, int]] = {}
+                for idx, card in enumerate(sorted(cards, key=lambda c: c.center[1]), start=1):
+                    card_x1, card_y1, card_x2, card_y2 = card.area
+                    ring_in_card = [r for r in rings if card_x1 <= r[0] <= card_x2 and card_y1 <= r[1] <= card_y2]
+                    if len(ring_in_card) == 1:
+                        ring_x, ring_y, _ = ring_in_card[0]
+                        click_x = min(card_x2 - click_radius, max(card_x1 + click_radius, ring_x + click_dx))
+                        click_y = min(card_y2 - click_radius, max(card_y1 + click_radius, ring_y))
+                    else:
+                        # Fallback: click the card center if ring validation fails.
+                        click_x, click_y = card.center
+
+                    areas[idx] = (
+                        int(click_x - click_radius),
+                        int(click_y - click_radius),
+                        int(click_x + click_radius),
+                        int(click_y + click_radius),
+                    )
+
+                if any(not c.bottom_closed for c in cards):
+                    logger.debug('[PureFiction] Buff options may require scroll (missing bottom border)')
+
+                if len(areas) == self.PURE_FICTION_BUFF_OPTION_COUNT:
+                    return areas
+
+        # Legacy fallback: fixed split
         raw_areas = self._split_area_vertically(
             self.PURE_FICTION_BUFF_OPTION_AREA,
             self.PURE_FICTION_BUFF_OPTION_COUNT,
@@ -852,7 +1471,7 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
         """
         在虚构叙事固定页面点击指定关卡。
 
-        当前使用每关星星区域中心点作为点击坐标，并等待 ENTRANCE_CHECKED。
+        当前使用每关星星区域中心点作为点击坐标，并等待页面稳定标识（如“进入故事”按钮）。
         """
         from module.base.button import ClickButton
 
@@ -880,30 +1499,44 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
             self.device.click(click_button)
 
             wait = Timer(timeout).start()
+            title_seen = False
             while not wait.reached():
                 self.device.screenshot()
                 if self.handle_forgotten_hall_buff():
                     continue
-                if self.appear(ENTRANCE_CHECKED, interval=0.2):
-                    logger.info(f'[PureFiction] Stage {stage_num} selected')
+                if self.match_template_color(PURE_FICTION_ENTER_STORY, interval=0.2):
+                    logger.info(f'[PureFiction] Stage {stage_num} selected (enter story detected)')
                     return True
                 if self.appear(PURE_FICTION_TEAM_BUTTON, interval=0.2):
                     logger.info(f'[PureFiction] Stage {stage_num} selected (team button detected)')
                     return True
                 if self.appear(PURE_FICTION_TEAM_TITLE, interval=0.2):
-                    logger.info(f'[PureFiction] Stage {stage_num} selected (title detected)')
-                    return True
+                    title_seen = True
+                    continue
+
+            if title_seen:
+                logger.info(f'[PureFiction] Stage {stage_num} selected (title detected)')
+                return True
 
         logger.error(f'[PureFiction] Failed to select stage {stage_num}')
         return False
 
     def _enter_pure_fiction_team_selection(self, skip_first_screenshot=True, timeout: float = 10.0) -> bool:
         """
-        进入虚构叙事选队界面（点击“队伍”按钮），确保预设编队按钮可见。
+        进入虚构叙事编队界面（点击“队伍”按钮），确保可见“预设编队/清除”图标。
         """
+        from module.base.button import ClickButton
+
         logger.info('[PureFiction] Enter team selection')
         timer = Timer(timeout).start()
         interval = Timer(1.2)
+        clicked_team_button = False
+
+        # Avoid relying on template-match offsets for clicking: offsets may be updated even on failed matches.
+        team_button_click = ClickButton(
+            area=PURE_FICTION_TEAM_BUTTON.buttons[0]._button,
+            name='PURE_FICTION_TEAM_BUTTON',
+        )
 
         while not timer.reached():
             if skip_first_screenshot:
@@ -914,25 +1547,226 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
             if self.handle_forgotten_hall_buff():
                 continue
 
-            if self.appear(PRESET_TEAM, interval=0.2):
-                logger.info('[PureFiction] Team selection ready (preset button visible)')
+            # Team selection screen has top-right pill icons (preset & trash).
+            if self.appear(PURE_FICTION_PRESET_ICON, interval=0) or self.appear(PURE_FICTION_CLEAR_ICON, interval=0):
+                if clicked_team_button:
+                    logger.info('[PureFiction] Team selection ready (preset/clear icon visible)')
+                else:
+                    logger.info('[PureFiction] Team selection already open (preset/clear icon visible)')
                 return True
 
-            if self.appear(PURE_FICTION_TEAM_BUTTON, interval=0.2):
+            # Stage selection page is stable when "进入故事" is visible; at this point we must open team selection.
+            if self.match_template_color(PURE_FICTION_ENTER_STORY, interval=0):
                 if interval.reached():
                     logger.info('[PureFiction] Clicking team button')
-                    self.device.click(PURE_FICTION_TEAM_BUTTON)
+                    self.device.click(team_button_click)
                     interval.reset()
+                    clicked_team_button = True
                 continue
 
-            if self.appear(PURE_FICTION_TEAM_TITLE, interval=0.2):
-                self.device.sleep(0.3)
+            if self.appear(PURE_FICTION_TEAM_BUTTON, interval=0):
+                if interval.reached():
+                    logger.info('[PureFiction] Clicking team button')
+                    self.device.click(team_button_click)
+                    interval.reset()
+                    clicked_team_button = True
                 continue
 
-            self.device.sleep(0.3)
+            _ = self.appear(PURE_FICTION_TEAM_TITLE, interval=0)
 
         logger.warning('[PureFiction] Enter team selection timeout')
         return False
+
+    PURE_FICTION_TEAM_ROW_SELECT_AREAS = {
+        # Row-number diamond areas (虚构叙事-编队) — used to set active row before applying preset teams.
+        1: (520, 450, 590, 515),
+        2: (520, 543, 590, 608),
+    }
+
+    def _click_pure_fiction_team_row(self, team_index: int) -> bool:
+        """Select row 1/2 on Pure Fiction team screen."""
+        from module.base.button import ClickButton
+
+        area = self.PURE_FICTION_TEAM_ROW_SELECT_AREAS.get(team_index)
+        if area is None:
+            logger.error(f'[PureFiction] Invalid team index: {team_index}')
+            return False
+
+        self.device.click(ClickButton(area=area, name=f'PureFictionTeamRow_{team_index}'))
+        return True
+
+    PURE_FICTION_ROW_EMPTY_TEMPLATES = {
+        1: PURE_FICTION_ROW1_EMPTY,
+        2: PURE_FICTION_ROW2_EMPTY,
+    }
+
+    def _pure_fiction_row_is_empty(self, team_index: int) -> bool:
+        button = self.PURE_FICTION_ROW_EMPTY_TEMPLATES.get(team_index)
+        if button is None:
+            return False
+        return self.appear(button, interval=0, similarity=0.8)
+
+    def _wait_for_pure_fiction_row_filled(
+        self,
+        team_index: int,
+        skip_first_screenshot=True,
+        timeout: float = 3.0,
+    ) -> bool:
+        timer = Timer(timeout).start()
+        while not timer.reached():
+            if skip_first_screenshot:
+                skip_first_screenshot = False
+            else:
+                self.device.screenshot()
+
+            if self.handle_forgotten_hall_buff():
+                continue
+
+            if not self._pure_fiction_row_is_empty(team_index):
+                logger.info(f'[PureFiction] Team {team_index} selection applied')
+                return True
+
+        logger.warning(f'[PureFiction] Team {team_index} still empty after selection')
+        return False
+
+    def _apply_pure_fiction_preset_team(self, team_index: int, preset_index: int) -> bool:
+        for attempt in range(1, 3):
+            logger.info(
+                f'[PureFiction] Applying preset team {preset_index} to team {team_index} '
+                f'(attempt {attempt}/2)'
+            )
+            self._click_pure_fiction_team_row(team_index)
+            self._click_preset_team(skip_first_screenshot=True, timeout=15)
+            if not self.select_preset_team(preset_index):
+                logger.warning(
+                    f'[PureFiction] Failed to select preset team for team {team_index}, retrying...'
+                )
+                continue
+
+            if self._wait_for_pure_fiction_row_filled(team_index, skip_first_screenshot=True, timeout=3.0):
+                return True
+
+        return False
+
+    def _click_pure_fiction_clear_team(self, team_index: int, skip_first_screenshot=True, timeout: float = 4.0) -> bool:
+        """Click the trash icon to clear team selection and verify the given row becomes empty.
+
+        Note: In current Pure Fiction UI, the trash icon may clear both upper/lower rows, so we
+        do not rely on selecting the row before clearing.
+        """
+        if self._pure_fiction_row_is_empty(team_index):
+            logger.info(f'[PureFiction] Team {team_index} already empty, skip clear')
+            return True
+
+        timer = Timer(timeout).start()
+        clicked = False
+        while not timer.reached():
+            if skip_first_screenshot:
+                skip_first_screenshot = False
+            else:
+                self.device.screenshot()
+
+            if self.handle_forgotten_hall_buff():
+                continue
+
+            # If cleared by other actions/animations, stop early.
+            if self._pure_fiction_row_is_empty(team_index):
+                logger.info(f'[PureFiction] Team {team_index} cleared')
+                return True
+
+            if not clicked and self.appear(PURE_FICTION_CLEAR_ICON, interval=0.2):
+                self.device.click(PURE_FICTION_CLEAR_ICON)
+                clicked = True
+                continue
+
+        if clicked:
+            logger.warning(f'[PureFiction] Team {team_index} clear verification timeout')
+        else:
+            logger.warning('[PureFiction] Clear icon not found')
+        return False
+
+    def _configure_preset_teams_flow(
+        self,
+        team1_preset: int = None,
+        team2_preset: int = None,
+        *,
+        mode_label: str = '',
+        team_label: str = 'team',
+        verify_method: str = 'slot',
+        ensure_entry=None,
+        focus_team=None,
+        clear_all=None,
+        clear_team=None,
+        apply_team=None,
+    ) -> None:
+        """Shared preset team configuration flow for FH modes."""
+        if not (team1_preset or team2_preset):
+            return
+
+        prefix = f'[{mode_label}] ' if mode_label else ''
+
+        if ensure_entry and not ensure_entry():
+            logger.warning(f'{prefix}Team selection entry may have failed, continuing...')
+
+        if clear_all:
+            logger.info(f'{prefix}Clearing existing team selections...')
+            clear_all()
+            if not self._verify_team_cleared(battle_num=1, timeout=5.0, method=verify_method):
+                logger.warning(f'{prefix}Team slots clear verification timeout, but continuing...')
+        elif clear_team:
+            logger.info(f'{prefix}Clearing existing team selections...')
+            for team_index in (1, 2):
+                if focus_team and not focus_team(team_index):
+                    logger.warning(f'{prefix}Failed to select {team_label} {team_index}, continuing...')
+                if not clear_team(team_index):
+                    logger.warning(
+                        f'{prefix}{team_label.capitalize()} {team_index} may not be cleared, continuing...'
+                    )
+
+        def apply_one(team_index: int, preset_index: int) -> None:
+            if not preset_index:
+                return
+            if focus_team and not focus_team(team_index):
+                logger.warning(f'{prefix}Failed to select {team_label} {team_index}, continuing...')
+            logger.info(f'{prefix}Configuring {team_label} {team_index} with preset team {preset_index}')
+
+            if apply_team:
+                if not apply_team(team_index, preset_index):
+                    logger.warning(
+                        f'{prefix}Failed to apply preset team for {team_label} {team_index}, continuing...'
+                    )
+                return
+
+            self._click_preset_team(skip_first_screenshot=True, timeout=15)
+            if not self.select_preset_team(preset_index):
+                logger.warning(
+                    f'{prefix}Failed to select preset team for {team_label} {team_index}, continuing...'
+                )
+            self._verify_team_selected_with_retry(
+                battle_num=team_index,
+                max_retry=3,
+                method=verify_method,
+            )
+
+        apply_one(1, team1_preset)
+        apply_one(2, team2_preset)
+        logger.info(f'{prefix}Preset teams configuration process completed')
+
+    def _configure_pure_fiction_preset_teams(self, team1_preset: int = None, team2_preset: int = None) -> None:
+        """Configure Pure Fiction preset teams (row 1 & row 2). Best-effort; does not raise."""
+        self._configure_preset_teams_flow(
+            team1_preset=team1_preset,
+            team2_preset=team2_preset,
+            mode_label='PureFiction',
+            team_label='team',
+            verify_method='seat',
+            ensure_entry=lambda: self._enter_pure_fiction_team_selection(timeout=12),
+            clear_team=lambda team_index: self._click_pure_fiction_clear_team(
+                team_index,
+                skip_first_screenshot=True,
+            ),
+            apply_team=self._apply_pure_fiction_preset_team,
+        )
 
     def _wait_for_pure_fiction_buff_panel(self, skip_first_screenshot=True, timeout: float = 6.0) -> bool:
         timer = Timer(timeout).start()
@@ -944,8 +1778,6 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
 
             if self.appear(PURE_FICTION_BUFF_APPLY, interval=0.2):
                 return True
-
-            self.device.sleep(0.2)
 
         return False
 
@@ -965,7 +1797,6 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
         )
         logger.info(f'[PureFiction] Select buff option {buff_index}')
         self.device.click(click_button)
-        self.device.sleep(0.3)
         return True
 
     def _click_pure_fiction_buff_apply(self, skip_first_screenshot=True, timeout: float = 6.0) -> bool:
@@ -980,8 +1811,6 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
                 logger.info('[PureFiction] Click buff apply')
                 self.device.click(PURE_FICTION_BUFF_APPLY)
                 return True
-
-            self.device.sleep(0.2)
 
         logger.warning('[PureFiction] Buff apply button not found')
         return False
@@ -1005,13 +1834,25 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
                     or self.appear(PRESET_TEAM, interval=0.2)):
                 return True
 
-            self.device.sleep(0.2)
-
         logger.warning('[PureFiction] Exit buff panel timeout')
         return False
 
-    def _select_pure_fiction_team_buff(self, team_index: int, buff_index: int, timeout: float = 8.0) -> bool:
-        if buff_index <= 0:
+    def _select_pure_fiction_team_buff(self, team_index: int, buff, timeout: float = 8.0) -> bool:
+        if buff is None:
+            return True
+
+        if isinstance(buff, str):
+            buff = buff.strip()
+            if not buff:
+                return True
+            if buff.isdigit():
+                buff = int(buff)
+        elif isinstance(buff, list):
+            buff = [str(v).strip() for v in buff if str(v).strip()]
+            if not buff:
+                return True
+
+        if isinstance(buff, int) and buff <= 0:
             return True
 
         if team_index not in (1, 2):
@@ -1043,26 +1884,62 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
                 interval.reset()
                 continue
 
-            self.device.sleep(0.2)
-
         if not panel_opened:
             logger.warning(f'[PureFiction] Buff panel not opened for team {team_index}')
             return False
 
-        if not self._select_pure_fiction_buff_option(buff_index):
+        selected_confirmed = False
+        for attempt in range(1, 4):
+            self.device.screenshot()
+            before_luma = self._pure_fiction_selected_luma(self.device.image)
+
+            if isinstance(buff, int):
+                selected = self._select_pure_fiction_buff_option(buff)
+            else:
+                selected = self._select_pure_fiction_buff_option_by_keyword(buff)
+
+            if not selected:
+                continue
+
+            timer = Timer(2.0).start()
+            last_luma = None
+            while not timer.reached():
+                self.device.screenshot()
+                last_luma = self._pure_fiction_selected_luma(self.device.image)
+                if last_luma >= self.PURE_FICTION_BUFF_SELECTED_LUMA_WHITE or last_luma >= before_luma + self.PURE_FICTION_BUFF_SELECTED_LUMA_DELTA:
+                    selected_confirmed = True
+                    logger.debug(f'[PureFiction] Buff selected luma: {before_luma:.1f} -> {last_luma:.1f}')
+                    break
+
+            if selected_confirmed:
+                break
+
+            if last_luma is not None:
+                logger.warning(
+                    f'[PureFiction] Buff selection not confirmed (attempt {attempt}/3), '
+                    f'luma: {before_luma:.1f} -> {last_luma:.1f}, retrying...'
+                )
+            else:
+                logger.warning(f'[PureFiction] Buff selection not confirmed (attempt {attempt}/3), retrying...')
+
+        if not selected_confirmed:
+            logger.warning('[PureFiction] Buff selection failed after retries')
+            self._exit_pure_fiction_buff_panel(skip_first_screenshot=False, timeout=6.0)
             return False
 
-        self._click_pure_fiction_buff_apply()
+        if not self._click_pure_fiction_buff_apply(skip_first_screenshot=True, timeout=6.0):
+            self._exit_pure_fiction_buff_panel(skip_first_screenshot=False, timeout=6.0)
+            return False
         self._exit_pure_fiction_buff_panel()
         return True
 
-    def _configure_pure_fiction_buffs(self, team1_buff: int = None, team2_buff: int = None) -> bool:
+    def _configure_pure_fiction_buffs(self, team1_buff: int | str | list[str] | None = None, team2_buff: int | str | list[str] | None = None) -> bool:
         success = True
         if team1_buff:
-            if not self._select_pure_fiction_team_buff(team_index=1, buff_index=team1_buff):
+            if not self._select_pure_fiction_team_buff(team_index=1, buff=team1_buff):
                 success = False
         if team2_buff:
-            if not self._select_pure_fiction_team_buff(team_index=2, buff_index=team2_buff):
+            if not self._select_pure_fiction_team_buff(team_index=2, buff=team2_buff):
                 success = False
         return success
 
@@ -1218,14 +2095,12 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
                 if STAGE_LIST.cur_buttons:
                     return True
 
-            self.device.sleep(0.3)
-
         logger.warning('Wait stage list loaded timeout')
         return False
 
     def _wait_for_apocalyptic_shadow_loaded(self, timeout: float = 20.0, skip_first_screenshot=True) -> bool:
         """
-        等待末日幻影选关界面加载完成（通过“前往挑战”按钮判断）。
+        等待末日幻影选关界面加载完成。
 
         Returns:
             bool: 是否在超时内加载成功
@@ -1245,12 +2120,45 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
             if self.appear_then_click(TELEPORT, interval=2):
                 continue
 
+            if self.match_template_color(STAGE_REWARD_BUTTON_LOWER, interval=0.5):
+                return True
+
             if self.match_template_color(APOCALYPTIC_SHADOW_GOTO_CHALLENGE, interval=0.5):
                 return True
 
-            self.device.sleep(0.3)
-
         logger.warning('Wait apocalyptic shadow loaded timeout')
+        return False
+
+    def _wait_for_pure_fiction_loaded(self, timeout: float = 10.0, skip_first_screenshot=True) -> bool:
+        """
+        等待虚构叙事选关界面加载完成（通过右下角奖励按钮判断）。
+
+        Returns:
+            bool: 是否在超时内加载成功
+        """
+        timer = Timer(timeout).start()
+        while not timer.reached():
+            if skip_first_screenshot:
+                skip_first_screenshot = False
+            else:
+                self.device.screenshot()
+
+            if self.handle_forgotten_hall_buff():
+                continue
+
+            if self.match_template_color(STAGE_REWARD_BUTTON_LOWER, interval=0.2):
+                return True
+
+            # Newer Pure Fiction page may show a stable "进入故事" button at bottom-right.
+            if self.match_template_color(PURE_FICTION_ENTER_STORY, interval=0.2):
+                return True
+
+            # Backward compatibility for old versions / fallback.
+            if (self.appear(PURE_FICTION_TEAM_BUTTON, interval=0.2)
+                    or self.appear(PURE_FICTION_TEAM_TITLE, interval=0.2)):
+                return True
+
+        logger.warning('Wait pure fiction loaded timeout')
         return False
 
     def goto_stage_selection_by_dungeon_type(self, dungeon_type: str) -> bool:
@@ -1266,6 +2174,34 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
             return self.goto_stage_selection(KEYWORDS_DUNGEON_LIST.The_Last_Vestiges_of_Towering_Citadel)
 
         if dungeon_type in ('Pure_Fiction', 'Apocalyptic_Shadow'):
+            # Fast path: already at target stage selection.
+            # Pure Fiction/Apocalyptic Shadow stage selection pages are not part of the base UI page map,
+            # so blindly calling ui_ensure(page_guide) would treat them as "Unknown ui page" and press BACK,
+            # causing an unnecessary exit/re-enter loop.
+            self.device.screenshot()
+            if self.handle_forgotten_hall_buff(interval=0):
+                self.device.screenshot()
+
+            if dungeon_type == 'Pure_Fiction':
+                if (
+                    self.match_template_color(STAGE_REWARD_BUTTON_LOWER, interval=0)
+                    or self.match_template_color(PURE_FICTION_ENTER_STORY, interval=0)
+                    or self.appear(PURE_FICTION_TEAM_BUTTON, interval=0)
+                    or self.appear(PURE_FICTION_TEAM_TITLE, interval=0)
+                ):
+                    logger.info('[PureFiction] Already at stage selection, skip navigation')
+                    return True
+
+            if dungeon_type == 'Apocalyptic_Shadow':
+                from tasks.forgotten_hall.assets.assets_apocalyptic_shadow_ui import APOCALYPTIC_SHADOW_GOTO_CHALLENGE
+
+                if (
+                    self.match_template_color(STAGE_REWARD_BUTTON_LOWER, interval=0)
+                    or self.match_template_color(APOCALYPTIC_SHADOW_GOTO_CHALLENGE, interval=0)
+                ):
+                    logger.info('[ApocalypticShadow] Already at stage selection, skip navigation')
+                    return True
+
             self.ui_ensure(page_guide)
             from tools.forgotten_hall_navigator import TreasuresLightwardNavigator
 
@@ -1281,7 +2217,8 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
 
             if dungeon_type == 'Pure_Fiction':
                 # 虚构叙事为固定页面，不依赖 STAGE_LIST OCR
-                self.device.sleep(1.0)
+                if not self._wait_for_pure_fiction_loaded(timeout=10.0, skip_first_screenshot=True):
+                    logger.warning('Pure Fiction stage selection not confirmed, continuing...')
                 return True
 
             if dungeon_type == 'Apocalyptic_Shadow':
@@ -1304,8 +2241,8 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
         stage_keyword: ForgottenHallStage,
         team1_preset: int = None,
         team2_preset: int = None,
-        team1_buff: int = None,
-        team2_buff: int = None,
+        team1_buff: int | str | list[str] | None = None,
+        team2_buff: int | str | list[str] | None = None,
     ) -> bool:
         """
         根据 dungeon_type 导航到指定关卡并配置预设编队
@@ -1346,10 +2283,10 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
             if team1_preset or team2_preset:
                 logger.hr('Configure preset teams', level=1)
                 if dungeon_type == 'Pure_Fiction':
-                    if not self._enter_pure_fiction_team_selection(timeout=12):
-                        logger.warning('[PureFiction] Team selection entry may have failed, continuing...')
-                self._click_preset_team(timeout=15)
-                self._configure_preset_teams(team1_preset, team2_preset)
+                    self._configure_pure_fiction_preset_teams(team1_preset=team1_preset, team2_preset=team2_preset)
+                else:
+                    self._click_preset_team(timeout=15)
+                    self._configure_preset_teams(team1_preset, team2_preset, verify_method='slot')
                 logger.info('Preset teams configuration completed')
 
             if dungeon_type == 'Pure_Fiction' and (team1_buff or team2_buff):
@@ -1447,8 +2384,13 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
         logger.info('Click preset team button')
         timeout_timer = Timer(timeout).start()
         interval = Timer(1.5)  # 点击间隔
-        check_interval = 0.5  # 检测间隔缩短到 0.5 秒
-        just_clicked = False  # 标记是否刚点击过
+
+        from module.base.button import ClickButton
+
+        pf_preset_tab_click = ClickButton(
+            area=PURE_FICTION_PRESET_TAB_UNSELECTED.buttons[0]._button,
+            name='PURE_FICTION_PRESET_TAB',
+        )
 
         while 1:
             if skip_first_screenshot:
@@ -1463,38 +2405,63 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
                 break
 
             # 使用新的预设编队面板检测模板
-            if self.appear(PRESET_TEAM_PANEL_OPENED):
+            if (
+                self.appear(PRESET_TEAM_PANEL_OPENED, similarity=0.8)
+                or self.appear(PRESET_TEAM_OPENED, similarity=0.8)
+            ):
                 logger.info('Preset team panel opened successfully')
                 break
 
-            # 如果刚点击过但检测失败，继续循环等待面板出现
-            if just_clicked:
-                logger.info(f'Waiting for preset team panel (checking every {check_interval}s)...')
-                self.device.sleep(check_interval)
-                just_clicked = False
+            # Pure Fiction: click the "预设编队" tab on the left roster panel.
+            if self.appear(PURE_FICTION_PRESET_TAB_SELECTED, interval=0):
+                logger.info('Pure Fiction preset tab already selected')
                 continue
+
+            if (self.appear(PURE_FICTION_PRESET_ICON, interval=0) or self.appear(PURE_FICTION_CLEAR_ICON, interval=0)):
+                # Only click when tab is currently unselected, to avoid toggling or redundant clicks.
+                if self.appear(PURE_FICTION_PRESET_TAB_UNSELECTED, interval=0) and interval.reached():
+                    logger.info('Clicking PURE_FICTION_PRESET_TAB...')
+                    self.device.click(pf_preset_tab_click)
+                    interval.reset()
+                    continue
 
             # 点击预设编队按钮
             if interval.reached() and self.appear(PRESET_TEAM):
                 logger.info('Clicking PRESET_TEAM button...')
                 self.device.click(PRESET_TEAM)
                 interval.reset()
-                just_clicked = True
                 continue
 
-            # 持续检测（即使没有点击）
-            self.device.sleep(check_interval)
+    def _count_empty_seats(self) -> int:
+        seats = (SEAT_1, SEAT_2, SEAT_3, SEAT_4)
+        empty_count = 0
+        for seat in seats:
+            if self.appear(seat, interval=0):
+                empty_count += 1
+        return empty_count
 
-    def _verify_team_cleared(self, battle_num: int, timeout: float = 2.0) -> bool:
-        """验证队伍已被清除（匹配空白模板）
+    def _verify_team_cleared(self, battle_num: int, timeout: float = 2.0, method: str = 'slot') -> bool:
+        """验证队伍已被清除
 
         Args:
             battle_num: 1=上半, 2=下半
             timeout: 超时时间（秒）
+            method: slot=使用 TEAM_SLOT_BATTLE*_EMPTY 模板, seat=使用 SEAT_* 空位模板
 
         Returns:
             是否成功清除
         """
+        if method == 'seat':
+            timer = Timer(timeout).start()
+            while not timer.reached():
+                self.device.screenshot()
+                empty_count = self._count_empty_seats()
+                if empty_count >= 4:
+                    logger.info(f'Battle {battle_num} team cleared successfully (empty_seats={empty_count})')
+                    return True
+            logger.warning(f'Battle {battle_num} team clear verification failed (seat)')
+            return False
+
         button = TEAM_SLOT_BATTLE1_EMPTY if battle_num == 1 else TEAM_SLOT_BATTLE2_EMPTY
 
         timer = Timer(timeout).start()
@@ -1503,29 +2470,37 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
             if self.appear(button):
                 logger.info(f'Battle {battle_num} team cleared successfully')
                 return True
-            self.device.sleep(0.2)
 
         logger.warning(f'Battle {battle_num} team clear verification failed')
         return False
 
-    def _verify_team_selected(self, battle_num: int, timeout: float = 2.0) -> bool:
-        """验证队伍已被选择（不匹配空白模板）
+    def _verify_team_selected(self, battle_num: int, timeout: float = 2.0, method: str = 'slot') -> bool:
+        """验证队伍已被选择
 
         Args:
             battle_num: 1=上半, 2=下半
             timeout: 超时时间（秒）
+            method: slot=使用 TEAM_SLOT_BATTLE*_EMPTY 模板, seat=使用 SEAT_* 空位模板
 
         Returns:
             是否成功选择
         """
+        if method == 'seat':
+            timer = Timer(timeout).start()
+            while not timer.reached():
+                self.device.screenshot()
+                empty_count = self._count_empty_seats()
+                if empty_count <= 3:
+                    logger.info(f'Battle {battle_num} team selected successfully (empty_seats={empty_count})')
+                    return True
+            logger.warning(f'Battle {battle_num} team selection verification failed (seat)')
+            return False
+
         button = TEAM_SLOT_BATTLE1_EMPTY if battle_num == 1 else TEAM_SLOT_BATTLE2_EMPTY
         # 获取实际的 Button 对象（ButtonWrapper 包含多个 Button）
         actual_button = button.buttons[0]
 
         logger.debug(f'Start verifying battle {battle_num} team selection')
-
-        # 给界面一个短暂的初始延迟，避免立即检测时界面尚未开始刷新
-        self.device.sleep(0.2)
 
         # 保存验证开始时的截图（仅调试模式）
         self.device.screenshot()
@@ -1571,8 +2546,6 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
                            f'(similarity={similarity:.4f} <= 0.85)')
                 return True
 
-            self.device.sleep(0.2)
-
         # 验证失败，保存详细信息
         logger.warning(f'Battle {battle_num} team selection verification failed')
         logger.debug(f'Final similarity: {last_similarity:.4f}, threshold: 0.85, '
@@ -1590,83 +2563,66 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
 
         return False
 
-    def _verify_team_selected_with_retry(self, battle_num: int, max_retry=3, retry_delay=2):
+    def _verify_team_selected_with_retry(
+        self,
+        battle_num: int,
+        max_retry=3,
+        retry_delay=2,
+        method: str = 'slot',
+    ):
         """验证队伍选择，失败后重试（最终失败仅警告）
 
         Args:
             battle_num: 关卡编号（1=上半，2=下半）
             max_retry: 最大重试次数，默认 3 次
-            retry_delay: 重试间隔（秒），默认 2 秒
+            retry_delay: 重试间隔（秒，当前不做固定等待）
+            method: slot=使用 TEAM_SLOT_BATTLE*_EMPTY 模板, seat=使用 SEAT_* 空位模板
         """
+        _ = retry_delay
         for attempt in range(1, max_retry + 1):
             logger.info(f'Verifying battle {battle_num} team selection (attempt {attempt}/{max_retry})...')
 
             # 调用现有的 _verify_team_selected() 方法
-            if self._verify_team_selected(battle_num=battle_num):
+            if self._verify_team_selected(battle_num=battle_num, method=method):
                 logger.info(f'Battle {battle_num} team selection verified successfully')
                 return  # 验证成功，返回
 
             # 验证失败，准备重试
             if attempt < max_retry:
-                logger.warning(f'Battle {battle_num} team verification failed, retrying in {retry_delay}s...')
-                self.device.sleep(retry_delay)
+                logger.warning(f'Battle {battle_num} team verification failed, retrying...')
             else:
                 # 最终失败，仅警告不中断
                 logger.warning(f'Battle {battle_num} team verification failed after {max_retry} attempts')
                 logger.warning('Team may not be correctly selected, but continuing...')
 
-    def _configure_preset_teams(self, team1_preset: int = None, team2_preset: int = None):
+    def _configure_preset_teams(
+        self,
+        team1_preset: int = None,
+        team2_preset: int = None,
+        verify_method: str = 'slot',
+    ):
         """配置两关的预设编队（增加等待和验证，失败不中断）
 
         Args:
             team1_preset: 第一关使用的预设编队编号 (1-12, 1-based)
             team2_preset: 第二关使用的预设编队编号 (1-12, 1-based)
+            verify_method: slot=使用 TEAM_SLOT_BATTLE*_EMPTY 模板, seat=使用 SEAT_* 空位模板
         """
-        # ========== 在开始配置前，先清除所有已有队伍（只清除一次） ==========
-        if team1_preset or team2_preset:
-            logger.info('Clearing all existing team selections...')
-            self.device.click(CLEAR_TEAM)
 
-            # 新增：等待并验证清除成功
-            timeout = Timer(5).start()  # 增加超时到 5 秒
-            cleared = False
-            while not timeout.reached():
-                self.device.screenshot()
-                if self.appear(TEAM_SLOT_BATTLE1_EMPTY):
-                    logger.info('Team slots cleared successfully')
-                    cleared = True
-                    break
-                self.device.sleep(0.5)  # 检测间隔 0.5 秒
+        def focus_team(team_index: int) -> bool:
+            if team_index == 2:
+                logger.info('Switching to battle 2...')
+                self._click_battle_switch_with_wait(2, timeout=5, verify_method=verify_method)
+            return True
 
-            if not cleared:
-                logger.warning('Team slots clear verification timeout, but continuing...')
-
-        # ========== 配置第一关队伍 ==========
-        if team1_preset:
-            logger.info(f'Configuring battle 1 with preset team {team1_preset}')
-
-            # 选择预设编队（内部已有重试逻辑）
-            self.select_preset_team(team1_preset)
-
-            # 等待并验证选择（增加重试）
-            self._verify_team_selected_with_retry(battle_num=1, max_retry=3)
-
-        # ========== 切换到第二关并配置队伍 ==========
-        if team2_preset:
-            logger.info('Switching to battle 2...')
-
-            # 切换下半并等待验证
-            self._click_battle_switch_with_wait(2, timeout=5)
-
-            logger.info(f'Configuring battle 2 with preset team {team2_preset}')
-
-            # 选择预设编队
-            self.select_preset_team(team2_preset)
-
-            # 等待并验证选择
-            self._verify_team_selected_with_retry(battle_num=2, max_retry=3)
-
-        logger.info('Preset teams configuration process completed')
+        self._configure_preset_teams_flow(
+            team1_preset=team1_preset,
+            team2_preset=team2_preset,
+            team_label='battle',
+            verify_method=verify_method,
+            focus_team=focus_team,
+            clear_all=lambda: self.device.click(CLEAR_TEAM),
+        )
 
     # ========== 预设编队滚动条检测与选择 ==========
     # 几何常量
@@ -1822,18 +2778,38 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
             name="PRESET_TEAM_SLIDER_DRAG"
         )
 
-        # 等待稳定
-        self.device.sleep(0.3)
+        stable_timer = Timer(1.0).start()
+        last_pos = None
+        stable_count = 0
+        while not stable_timer.reached():
+            self.device.screenshot()
+            valid_now, y_top_now, y_bot_now, _, _ = self._get_preset_team_scroll_thumb(
+                self.device.image
+            )
+            if not valid_now:
+                continue
+            pos = (y_top_now, y_bot_now)
+            if pos == last_pos:
+                stable_count += 1
+                if stable_count >= 2:
+                    break
+            else:
+                stable_count = 0
+                last_pos = pos
 
         return True
 
-    def _click_preset_team_slot(self, slot_index: int):
+    def _click_preset_team_slot(self, slot_index: int) -> bool:
         """点击当前可见的第N个队伍槽位
 
         Args:
             slot_index: 槽位索引 (0, 1, 2)
         """
         from module.base.button import Button
+
+        if slot_index not in (0, 1, 2):
+            logger.error(f'Invalid preset team slot index: {slot_index}')
+            return False
 
         y_base = self.PRESET_TEAM_TOP_Y + slot_index * self.PRESET_TEAM_PITCH
         y_center = y_base + self.PRESET_TEAM_HEIGHT // 2
@@ -1851,6 +2827,7 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
 
         logger.info(f'Click preset team slot {slot_index} at ({x_center}, {y_center})')
         self.device.click(button)
+        return True
 
     def select_preset_team(self, team_index: int) -> bool:
         """选择指定编号的预设编队
@@ -1871,13 +2848,12 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
 
         # 获取当前滚动状态
         self.device.screenshot()
-        valid, total, top = self._get_preset_team_scroll_state()
+        valid, total, _ = self._get_preset_team_scroll_state()
 
         if not valid:
             # 无滚动条，队伍数 <= 3，直接点击
             if target < 3:
-                self._click_preset_team_slot(target)
-                return True
+                return self._click_preset_team_slot(target)
             else:
                 logger.error(f'Target team {team_index} not available (only {total} teams)')
                 return False
@@ -1887,21 +2863,19 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
             logger.error(f'Target team {team_index} not available (only {total} teams)')
             return False
 
-        # 计算目标队伍在当前视图中的位置
-        visible_index = target - top
+        # 预设编队列表每屏可见 3 个槽位。
+        # 通过“目标队伍索引”推导目标滚动到的顶部索引与点击槽位，避免依赖 top 计算导致 -1/3 之类的越界点击。
+        desired_top = max(0, min(target, total - 3))
+        slot_index = target - desired_top
 
-        # 如果不在可见范围(0-2)，需要滚动
-        if visible_index < 0 or visible_index > 2:
-            logger.info(f'Target team not visible (visible_index={visible_index}), scrolling...')
-            self._drag_preset_team_slider(target)
-            self.device.screenshot()
+        logger.info(f'Preset team scroll target: top={desired_top}, slot={slot_index}')
+        if not self._drag_preset_team_slider(desired_top):
+            logger.warning('Preset team slider drag may have failed, continuing...')
+        self.device.screenshot()
 
-            # 重新获取状态
-            _, _, top = self._get_preset_team_scroll_state()
-            visible_index = target - top
+        if not self._click_preset_team_slot(slot_index):
+            return False
 
-        # 点击对应槽位
-        self._click_preset_team_slot(visible_index)
         logger.info(f'Selected preset team {team_index}')
         return True
 
@@ -1914,18 +2888,25 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
         if battle_num == 2:
             logger.info('Switch to battle 2')
             self.device.click(BATTLE_2_SWITCH)
-            self.device.sleep(0.5)
 
-    def _click_battle_switch_with_wait(self, battle_num: int, timeout=5):
+    def _click_battle_switch_with_wait(self, battle_num: int, timeout=5, verify_method: str = 'slot'):
         """切换到指定关卡并等待验证（失败不中断）
 
         Args:
             battle_num: 关卡编号（2=下半）
             timeout: 超时时间（秒），默认 5 秒
+            verify_method: slot=使用 TEAM_SLOT_BATTLE2_EMPTY 模板, seat=仅等待画面刷新
         """
         if battle_num == 2:
             logger.info('Clicking battle 2 switch...')
             self.device.click(BATTLE_2_SWITCH)
+
+            if verify_method == 'seat':
+                # Pure Fiction team UI may not match TEAM_SLOT_BATTLE*_EMPTY templates reliably.
+                settle = Timer(min(timeout, 1.0), count=3).start()
+                while not settle.reached():
+                    self.device.screenshot()
+                return
 
             # 等待并验证切换成功
             timer = Timer(timeout).start()
@@ -1938,7 +2919,6 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
                     logger.info('Successfully switched to battle 2')
                     switched = True
                     break
-                self.device.sleep(0.5)  # 检测间隔 0.5 秒
 
             if not switched:
                 logger.warning(f'Battle 2 switch verification timeout after {timeout}s')
@@ -2015,8 +2995,6 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
                 logger.info('Battle failed - BATTLE_FAILED detected')
                 return 'failure'
 
-            self.device.sleep(0.5)
-
         logger.warning(f'Battle result detection timeout after {timeout}s')
         return 'timeout'
 
@@ -2047,10 +3025,17 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
                 self.device.screenshot()
 
             # End condition: back at stage selection
-            if self.appear(FORGOTTEN_HALL_CHECK):
+            if (
+                self.appear(FORGOTTEN_HALL_CHECK)
+                or self.match_template_color(STAGE_REWARD_BUTTON_LOWER, interval=0)
+                or self.match_template_color(PURE_FICTION_ENTER_STORY, interval=0)
+                or self.appear(PURE_FICTION_TEAM_BUTTON, interval=0)
+                or self.appear(PURE_FICTION_TEAM_TITLE, interval=0)
+            ):
                 logger.info('Successfully returned to stage selection')
-                self.device.screenshot()
-                STAGE_LIST.load_rows(main=self)
+                if self.appear(FORGOTTEN_HALL_CHECK, interval=0):
+                    self.device.screenshot()
+                    STAGE_LIST.load_rows(main=self)
                 return True
 
             # Click return button using match_template_color for better detection
@@ -2085,14 +3070,24 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
         while not timeout.reached():
             self.device.screenshot()
 
-            if self.appear(FORGOTTEN_HALL_CHECK):
-                logger.info('Battle success handled, returned to forgotten hall')
+            if (
+                self.appear(FORGOTTEN_HALL_CHECK)
+                or self.match_template_color(STAGE_REWARD_BUTTON_LOWER, interval=0.2)
+                or self.match_template_color(PURE_FICTION_ENTER_STORY, interval=0.2)
+                or self.appear(PURE_FICTION_TEAM_BUTTON, interval=0.2)
+                or self.appear(PURE_FICTION_TEAM_TITLE, interval=0.2)
+            ):
+                logger.info('Battle success handled, returned to stage selection')
                 return True
 
             # 处理快速通关弹窗（3星通关时前置关卡奖励解锁提示）
             if self.appear(QUICK_COMPLETE_TITLE, interval=2):
                 logger.info('Quick complete popup detected, clicking confirm')
                 self.device.click(QUICK_COMPLETE_CONFIRM)
+                continue
+
+            # Pure Fiction battle result may not show COMBAT_AGAIN; return button leads back to stage selection.
+            if self.appear_then_click(PURE_FICTION_RETURN, interval=2):
                 continue
 
             if self.appear_then_click(COMBAT_AGAIN, interval=3):
@@ -2105,8 +3100,6 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
                 continue
             if self.handle_popup_single():
                 continue
-
-            self.device.sleep(0.5)
 
         logger.warning('Battle success handling timeout')
         return True
@@ -2158,8 +3151,7 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
                     logger.error(f'Max retries ({max_retries}) exceeded, giving up')
                     return (False, attempt)
 
-                logger.info(f'Waiting 2s before retry attempt {attempt+1}')
-                self.device.sleep(2.0)
+                logger.info(f'Preparing retry attempt {attempt+1}')
                 continue
 
             else:  # timeout
@@ -2172,13 +3164,12 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
                     return (False, attempt)
 
                 logger.info(f'Retrying after timeout, attempt {attempt+1}')
-                self.device.sleep(2.0)
                 continue
 
         logger.error('Unexpected exit from retry loop')
         return (False, max_retries)
 
-    def _click_enter_dungeon(self, skip_first_screenshot=True):
+    def _click_enter_dungeon(self, skip_first_screenshot=True, timeout: float = 20.0):
         """
         Click enter button to enter forgotten hall dungeon (without combat execution)
 
@@ -2190,41 +3181,49 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
 
         Pages:
             in: ENTRANCE_CHECKED, ENTER_FORGOTTEN_HALL_DUNGEON
-            out: In dungeon (BUFF_Forgotten_Hall appears)
+            out: In dungeon (map exit / combat executing)
         """
-        from tasks.base.assets.assets_base_popup import BUFF_Forgotten_Hall
-        from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import (
-            DUNGEON_ENTER_CHECKED,
-            ENTER_FORGOTTEN_HALL_DUNGEON
-        )
+        from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import ENTER_FORGOTTEN_HALL_DUNGEON
 
         logger.info('Entering forgotten hall dungeon')
-        interval = Timer(3)
-        timeout = Timer(3)
+        click_interval = Timer(2.0).start()
+        overall_timeout = Timer(timeout).start()
+        clicked = False
 
-        while True:
+        while not overall_timeout.reached():
             if skip_first_screenshot:
                 skip_first_screenshot = False
             else:
                 self.device.screenshot()
 
-            # Success: entered dungeon (BUFF appears)
-            if self.appear(BUFF_Forgotten_Hall):
-                logger.info('Successfully entered dungeon')
+            if self._handle_forgotten_hall_click_blank_prompt(interval=0.8):
+                continue
+
+            # Handle any FH buff popups that block the screen after entering.
+            if self.handle_forgotten_hall_buff(interval=0.8):
+                continue
+
+            # Success: in dungeon map or already in combat.
+            if self.is_combat_executing():
+                logger.info('Successfully entered dungeon (combat detected)')
+                break
+            if self.is_in_map_exit(interval=0):
+                logger.info('Successfully entered dungeon (map detected)')
                 break
 
-            # Check enter button status
-            if self.match_template_color(DUNGEON_ENTER_CHECKED):
-                if timeout.reached():
-                    logger.info('Wait dungeon BUFF_Forgotten_Hall timeout')
-                    break
-            else:
-                timeout.reset()
+            if not clicked and self.appear(ENTER_FORGOTTEN_HALL_DUNGEON, interval=0):
+                clicked = True
 
-            # Click enter button when ready
-            if interval.reached() and self.team_prepared():
+            # Click enter button when ready.
+            if click_interval.reached() and self.team_prepared():
                 self.device.click(ENTER_FORGOTTEN_HALL_DUNGEON)
-                interval.reset()
+                click_interval.reset()
+
+        else:
+            if clicked:
+                logger.warning('[ForgottenHall] Enter dungeon timeout, continuing...')
+            else:
+                logger.warning('[ForgottenHall] Enter dungeon: enter button not found, continuing...')
 
     def enter_forgotten_hall_dungeon(self, skip_first_screenshot=True):
         """
@@ -2448,7 +3447,7 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
                     break
                 logger.info(f'Scrolling right, scanned {len(scanned_stages)}/{max_stage} stages')
                 STAGE_LIST.drag_page('right', main=self)
-                self.device.sleep(0.5)
+                self._wait_for_stage_list_loaded(timeout=5.0, skip_first_screenshot=False)
                 scroll_count += 1
 
         # 填充未扫描到的关卡为0星
@@ -2666,21 +3665,23 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
 
         # 点击奖励提示进入奖励界面
         self.device.click(REWARD_INDICATOR)
-        self.device.sleep(1.0)
 
         # 等待奖励界面加载并领取
         timeout = Timer(15).start()
         claimed = False
+        claim_interval = Timer(0.5)
+        exit_interval = Timer(0.5)
 
         while not timeout.reached():
             self.device.screenshot()
 
             # 检测领取按钮
             if self.appear(REWARD_CLAIM_BUTTON, interval=1):
-                logger.info('Claiming reward...')
-                self.device.click(REWARD_CLAIM_BUTTON)
-                claimed = True
-                self.device.sleep(0.5)
+                if claim_interval.reached():
+                    logger.info('Claiming reward...')
+                    self.device.click(REWARD_CLAIM_BUTTON)
+                    claimed = True
+                    claim_interval.reset()
                 continue
 
             # 处理领取后的弹窗
@@ -2701,9 +3702,10 @@ class ForgottenHallUI(DungeonUI, ForgottenHallTeam, MapControl):
 
             # 点击退出按钮返回深渊界面
             if self.appear(REWARD_EXIT, interval=2):
-                logger.info('Clicking exit button to return to forgotten hall')
-                self.device.click(REWARD_EXIT)
-                self.device.sleep(0.5)
+                if exit_interval.reached():
+                    logger.info('Clicking exit button to return to forgotten hall')
+                    self.device.click(REWARD_EXIT)
+                    exit_interval.reset()
                 continue
 
         return claimed

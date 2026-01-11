@@ -1007,8 +1007,12 @@ class Connection(ConnectionAttr):
             o = 0
             logger.warning('Unable to get device orientation, assume it is normal')
 
+        prev_orientation = getattr(self, 'orientation', None)
         self.orientation = o
-        logger.attr('Device Orientation', f'{o} ({Connection._orientation_description.get(o, "Unknown")})')
+        # Avoid spamming logs: only print when orientation changed (or first call).
+        if (not getattr(self, '_orientation_logged', False)) or prev_orientation != o:
+            logger.attr('Device Orientation', f'{o} ({Connection._orientation_description.get(o, "Unknown")})')
+            self._orientation_logged = True
         return o
 
     @retry

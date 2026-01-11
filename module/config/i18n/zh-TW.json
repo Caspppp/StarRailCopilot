@@ -1801,6 +1801,24 @@
       "11": "11",
       "12": "12"
     },
+    "Team1Buff": {
+      "name": "ForgottenHallChallenge.Team1Buff.name",
+      "help": "ForgottenHallChallenge.Team1Buff.help",
+      "1": "1",
+      "2": "2",
+      "3": "3",
+      "\u51fb\u7834": "\u51fb\u7834",
+      "\u5fc6\u7075": "\u5fc6\u7075"
+    },
+    "Team2Buff": {
+      "name": "ForgottenHallChallenge.Team2Buff.name",
+      "help": "ForgottenHallChallenge.Team2Buff.help",
+      "1": "1",
+      "2": "2",
+      "3": "3",
+      "\u51fb\u7834": "\u51fb\u7834",
+      "\u5fc6\u7075": "\u5fc6\u7075"
+    },
     "AutoStageSelection": {
       "name": "ForgottenHallChallenge.AutoStageSelection.name",
       "help": "ForgottenHallChallenge.AutoStageSelection.help",
