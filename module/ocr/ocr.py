@@ -23,6 +23,7 @@ class OcrResultButton:
             matched_keyword: Keyword object or None
             star_count: Star rating for Forgotten Hall stages (None or 0-3)
         """
+        self.boxed_result = boxed_result
         self.area = boxed_result.box
         self.search = area_pad(self.area, pad=-20)
         # self.color =
@@ -63,6 +64,14 @@ class OcrResultButton:
     def is_completed(self) -> bool:
         """检查关卡是否3星完成（仅用于深渊关卡）"""
         return self.star_count == 3 if self.star_count is not None else None
+
+    def set_matched_keyword(self, keyword):
+        if keyword is None:
+            self.matched_keyword = None
+            self.name = self.boxed_result.ocr_text
+        else:
+            self.matched_keyword = keyword
+            self.name = str(keyword)
 
 
 class Ocr:
@@ -311,6 +320,24 @@ class Ocr:
         button = OcrResultButton(boxed_result, matched_keyword)
         return button
 
+    def _product_buttons(
+            self,
+            results: "list[BoxedResult]",
+            keyword_classes,
+            lang: str = None,
+            ignore_punctuation=True,
+            ignore_digit=True
+    ) -> "list[OcrResultButton]":
+        results = [self._product_button(
+            result,
+            keyword_classes=keyword_classes,
+            lang=lang,
+            ignore_punctuation=ignore_punctuation,
+            ignore_digit=ignore_digit,
+        ) for result in results]
+        results = [result for result in results if result.is_keyword_matched]
+        return results
+
     def matched_ocr(
             self,
             image,
@@ -333,10 +360,8 @@ class Ocr:
         """
         results = self.detect_and_ocr(image, direct_ocr=direct_ocr)
 
-        results = [self._product_button(
-            result, keyword_classes=keyword_classes, lang=lang, ignore_punctuation=ignore_punctuation
-        ) for result in results]
-        results = [result for result in results if result.is_keyword_matched]
+        results = self._product_buttons(
+            results, keyword_classes=keyword_classes, lang=lang, ignore_punctuation=ignore_punctuation)
 
         logger.attr(name=f'{self.name} matched',
                     text=results)

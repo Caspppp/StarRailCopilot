@@ -391,6 +391,34 @@
     "jp": "隠者",
     "es": "Eremita"
   },
+  "EverGloriousMagicalGirl": {
+    "setid": 129,
+    "dungeon_id": 1215,
+    "cn_origin": "闪耀功勋的魔法少女",
+    "cht_origin": "功勳閃耀的魔法少女",
+    "en_origin": "Ever-Glorious Magical Girl",
+    "jp_origin": "功績輝く魔法少女",
+    "es_origin": "Chica mágica de hazañas gloriosas",
+    "cn": "魔法少女",
+    "cht": "魔法少女",
+    "en": "Magical Girl",
+    "jp": "魔法少女",
+    "es": "Chica mágica"
+  },
+  "DivinerofDistantReach": {
+    "setid": 130,
+    "dungeon_id": 1215,
+    "cn_origin": "应天涉远的卜者",
+    "cht_origin": "應天涉遠的卜者",
+    "en_origin": "Diviner of Distant Reach",
+    "jp_origin": "天命に従う旅の卜者",
+    "es_origin": "Adivino de alcance remoto",
+    "cn": "卜者",
+    "cht": "卜者",
+    "en": "Diviner",
+    "jp": "卜者",
+    "es": "Adivino"
+  },
   "SpaceSealingStation": {
     "setid": 301,
     "dungeon_id": 230,
@@ -726,5 +754,33 @@
     "en": "Tengoku",
     "jp": "天国",
     "es": "Tengoku"
+  },
+  "PunklordeStageZero": {
+    "setid": 325,
+    "dungeon_id": 350,
+    "cn_origin": "零号关卡朋克洛德",
+    "cht_origin": "零號關卡龐克洛德",
+    "en_origin": "Punklorde Stage Zero",
+    "jp_origin": "ステージゼロ：パンクロード",
+    "es_origin": "Etapa cero de Punklorde",
+    "cn": "朋克洛德",
+    "cht": "龐克洛德",
+    "en": "Punklorde",
+    "jp": "パンクロード",
+    "es": "Punklorde"
+  },
+  "CityofConvergingStars": {
+    "setid": 326,
+    "dungeon_id": 350,
+    "cn_origin": "千星荟萃之城",
+    "cht_origin": "千星薈萃之城",
+    "en_origin": "City of Converging Stars",
+    "jp_origin": "千の星が集う街",
+    "es_origin": "Ciudad de las mil estrellas",
+    "cn": "千星荟萃",
+    "cht": "千星薈萃",
+    "en": "Converging Stars",
+    "jp": "千の星が集",
+    "es": "Las mil estrellas"
   }
 }

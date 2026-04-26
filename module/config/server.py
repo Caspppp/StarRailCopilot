@@ -9,6 +9,7 @@ VALID_LANG = ['cn', 'en']
 VALID_SERVER = {
     'CN-Official': 'com.miHoYo.hkrpg',
     'CN-Bilibili': 'com.miHoYo.hkrpg.bilibili',
+    'VN-Official': 'com.HoYoverse.hkrpgvn',
     'OVERSEA-America': 'com.HoYoverse.hkrpgoversea',
     'OVERSEA-Asia': 'com.HoYoverse.hkrpgoversea',
     'OVERSEA-Europe': 'com.HoYoverse.hkrpgoversea',
@@ -23,6 +24,7 @@ VALID_CLOUD_PACKAGE = set(list(VALID_CLOUD_SERVER.values()))
 DICT_PACKAGE_TO_ACTIVITY = {
     'com.miHoYo.hkrpg': 'com.mihoyo.combosdk.ComboSDKActivity',
     'com.miHoYo.hkrpg.bilibili': 'com.mihoyo.combosdk.ComboSDKActivity',
+    'com.HoYoverse.hkrpgvn': 'com.mihoyo.combosdk.ComboSDKActivity',
     'com.HoYoverse.hkrpgoversea': 'com.mihoyo.combosdk.ComboSDKActivity',
     'com.miHoYo.cloudgames.hkrpg': 'com.mihoyo.cloudgame.ui.SplashActivity',
 }

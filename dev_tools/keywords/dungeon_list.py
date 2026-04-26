@@ -27,6 +27,7 @@ def dungeon_name(name: str) -> str:
         'The_Swarm_Disaster',
         'Swarm_Disaster',
         'Gold_and_Gears',
+        'Unknowable_Domain',
     ]:
         name = f'Simulated_Universe_{name}'
     name = name.replace('Stagnant_Shadow_Stagnant_Shadow', 'Stagnant_Shadow')
@@ -74,6 +75,7 @@ class GenerateDungeonList(GenerateKeyword):
         # Consider rogue DLC as a dungeon
         yield '寰宇蝗灾'
         yield '黄金与机械'
+        yield '不可知域'
         # 'Memory of Chaos' is not a real dungeon, but represents a group
         yield '混沌回忆'
         yield '天艟求仙迷航录'
@@ -123,6 +125,7 @@ class GenerateDungeonList(GenerateKeyword):
             'Calyx_Crimson_Harmony',
             'Calyx_Crimson_Nihility',
             'Calyx_Crimson_Remembrance',
+            'Calyx_Crimson_Elation',
         ]
         for keyword in order:
             condition = lambda x: x['name'].startswith(keyword)
@@ -160,8 +163,9 @@ class GenerateDungeonList(GenerateKeyword):
         Luofu = dungeons[3:6]
         Penacony = dungeons[6:9]
         Amphoreus = dungeons[9:12]
-        others = dungeons[12:]
-        dungeons = Amphoreus + Penacony + Luofu + Jarilo + others
+        Planarcadia = dungeons[12:15]
+        others = dungeons[15:]
+        dungeons = Planarcadia + Amphoreus + Penacony + Luofu + Jarilo + others
 
         # Re-sort ID
         self.keyword_index = 0

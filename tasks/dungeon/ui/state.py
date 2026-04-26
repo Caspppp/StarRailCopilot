@@ -14,6 +14,16 @@ class OcrSimUniPoint(DigitCounter):
     def after_process(self, result):
         result = super().after_process(result)
         result = result.replace('O', '0').replace('o', '0')
+        # 14000/1400 -> 14000/14000
+        if result.endswith('/1400'):
+            result = result.removesuffix('/1400') + '/14000'
+        if result.endswith('/140'):
+            result = result.removesuffix('/140') + '/14000'
+        # Since 4.2 OcrSimUniPoint is 18000 at max
+        if result.endswith('/1800'):
+            result = result.removesuffix('/1800') + '/18000'
+        if result.endswith('/180'):
+            result = result.removesuffix('/180') + '/18000'
         return result
 
 

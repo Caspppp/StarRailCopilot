@@ -58,7 +58,7 @@ from module.webui.fake import (
 )
 from module.webui.fastapi import asgi_app
 from module.webui.lang import _t, t
-from module.webui.patch import patch_executor
+from module.webui.patch import fix_py37_subprocess_communicate, patch_executor, patch_mimetype
 from module.webui.pin import put_input, put_select
 from module.webui.process_manager import ProcessManager
 from module.webui.remote_access import RemoteAccess
@@ -91,6 +91,8 @@ from module.webui.widgets import (
 from module.webui.components import relic_widgets
 
 patch_executor()
+patch_mimetype()
+fix_py37_subprocess_communicate()
 task_handler = TaskHandler()
 
 
@@ -131,9 +133,9 @@ class AlasGUI(Frame):
                 {"label": t("Gui.Aside.Home"), "value": "Home", "color": "aside"}
             ],
             onclick=[self.ui_develop],
-        ),
-        put_scope("aside_instance",[
-            put_scope(f"alas-instance-{i}",[])
+        )
+        put_scope("aside_instance", [
+            put_scope(f"alas-instance-{i}", [])
             for i, _ in enumerate(alas_instance())
         ])
         self.set_aside_status()
@@ -152,6 +154,7 @@ class AlasGUI(Frame):
     @use_scope("aside_instance")
     def set_aside_status(self) -> None:
         flag = True
+
         def update(name, seq):
             with use_scope(f"alas-instance-{seq}", clear=True):
                 icon_html = Icon.RUN

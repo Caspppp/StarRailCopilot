@@ -279,6 +279,30 @@ Reminiscence = Cone(
     path_name='Remembrance',
     character_name='',
 )
+Sneering = Cone(
+    id=20023,
+    name='Sneering',
+    cn='嗤笑',
+    cht='嗤笑',
+    en='Sneering',
+    jp='嗤笑',
+    es='Risita burlona',
+    rarity='Rare',
+    path_name='Elation',
+    character_name='',
+)
+Lingering_Tear = Cone(
+    id=20024,
+    name='Lingering_Tear',
+    cn='残泪',
+    cht='殘淚',
+    en='Lingering Tear',
+    jp='残涙',
+    es='Las lágrimas que quedan',
+    rarity='Rare',
+    path_name='Elation',
+    character_name='',
+)
 Post_Op_Conversation = Cone(
     id=21000,
     name='Post_Op_Conversation',
@@ -1011,6 +1035,30 @@ See_You_at_the_End = Cone(
     path_name='The_Hunt',
     character_name='',
 )
+Mushy_Shroomy_Adventures = Cone(
+    id=21064,
+    name='Mushy_Shroomy_Adventures',
+    cn='菇菇嘎嘎历险记',
+    cht='菇菇嘎嘎歷險記',
+    en="Mushy Shroomy's Adventures",
+    jp='タケタケ冒険記',
+    es='Las aventuras de Champigaga',
+    rarity='VeryRare',
+    path_name='Elation',
+    character_name='',
+)
+Today_Good_Luck = Cone(
+    id=21065,
+    name='Today_Good_Luck',
+    cn='今日好手气',
+    cht='今日好手氣',
+    en="Today's Good Luck",
+    jp='今日は好運',
+    es='La buena suerte de hoy',
+    rarity='VeryRare',
+    path_name='Elation',
+    character_name='',
+)
 Before_the_Tutorial_Mission_Starts = Cone(
     id=22000,
     name='Before_the_Tutorial_Mission_Starts',
@@ -1093,6 +1141,18 @@ Fly_Into_a_Pink_Tomorrow = Cone(
     es='Volando hacia un mañana rosado',
     rarity='VeryRare',
     path_name='Remembrance',
+    character_name='',
+)
+Tomorrow_Together = Cone(
+    id=22007,
+    name='Tomorrow_Together',
+    cn='未来，有我们一起',
+    cht='未來，有我們一起',
+    en='Tomorrow, Together',
+    jp='みんなで一緒に未来へ',
+    es='Juntos hacia el futuro',
+    rarity='VeryRare',
+    path_name='Elation',
     character_name='',
 )
 Night_on_the_Milky_Way = Cone(
@@ -1731,6 +1791,66 @@ This_Love_Forever = Cone(
     path_name='Remembrance',
     character_name='Cyrene',
 )
+Dazzled_by_a_Flowery_World = Cone(
+    id=23053,
+    name='Dazzled_by_a_Flowery_World',
+    cn='花花世界迷人眼',
+    cht='花花世界迷人眼',
+    en='Dazzled by a Flowery World',
+    jp='きらびやかな世界',
+    es='El cautivador mundochispa',
+    rarity='SuperRare',
+    path_name='Elation',
+    character_name='Sparxie',
+)
+When_She_Decided_to_See = Cone(
+    id=23054,
+    name='When_She_Decided_to_See',
+    cn='当她决定看见',
+    cht='當她決定看見',
+    en='When She Decided to See',
+    jp='彼女が視ると決めた時',
+    es='Cuando se decidió a ver',
+    rarity='SuperRare',
+    path_name='Elation',
+    character_name='YaoGuang',
+)
+The_Finale_of_a_Lie = Cone(
+    id=23056,
+    name='The_Finale_of_a_Lie',
+    cn='一场谎言的终幕',
+    cht='一場謊言的終幕',
+    en='The Finale of a Lie',
+    jp='或る嘘の終幕',
+    es='El final de una mentira',
+    rarity='SuperRare',
+    path_name='The_Hunt',
+    character_name='Ashveil',
+)
+Welcome_to_the_Cosmic_City = Cone(
+    id=23057,
+    name='Welcome_to_the_Cosmic_City',
+    cn='欢迎来到银河城',
+    cht='歡迎來到銀河城',
+    en='Welcome to the Cosmic City',
+    jp='銀河シティへようこそ',
+    es='Bienvenidos a la ciudad cósmica',
+    rarity='SuperRare',
+    path_name='Elation',
+    character_name='SilverWolfLV999',
+)
+Until_the_Flowers_Bloom_Again = Cone(
+    id=23058,
+    name='Until_the_Flowers_Bloom_Again',
+    cn='邂逅于下一个花季',
+    cht='邂逅於下一個花季',
+    en='Until the Flowers Bloom Again',
+    jp='再び花が咲く季節に',
+    es='Encuentro en la próxima primavera',
+    rarity='SuperRare',
+    path_name='Elation',
+    character_name='Evanescia',
+)
 On_the_Fall_of_an_Aeon = Cone(
     id=24000,
     name='On_the_Fall_of_an_Aeon',
@@ -1801,5 +1921,17 @@ Memory_Curtain_Never_Falls = Cone(
     es='Sobre los recuerdos nunca cae el telón',
     rarity='SuperRare',
     path_name='Remembrance',
+    character_name='',
+)
+Elation_Brimming_With_Blessings = Cone(
+    id=24006,
+    name='Elation_Brimming_With_Blessings',
+    cn='欢愉满溢祝福',
+    cht='歡愉滿溢祝福',
+    en='Elation Brimming With Blessings',
+    jp='愉悦溢れる祝福',
+    es='Exultación desbordante de bendiciones',
+    rarity='SuperRare',
+    path_name='Elation',
     character_name='',
 )

@@ -6,6 +6,7 @@ dict_aired_version = {
     TrailblazerPreservation: "0.0",
     TrailblazerHarmony: "0.0",
     TrailblazerRemembrance: "0.0",
+    TrailblazerElation: "0.0",
 
     # 0.0
     Himeko: "0.0",
@@ -89,7 +90,12 @@ dict_aired_version = {
     Evernight: "3.6",
     DanHengPermansorTerrae: "3.6",
     Cyrene: "3.7",
-    TheDahlia: "3.8"
+    TheDahlia: "3.8",
+    Sparxie: "4.0",
+    YaoGuang: "4.0",
+    Ashveil: "4.1",
+    SilverWolfLV999: "4.2",
+    Evanescia: "4.2",
 }
 
 

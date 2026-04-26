@@ -93,6 +93,8 @@ class Login(LoginAndroidCloud, RogueUI, AgreementHandler, UIDHandler):
                 continue
             if self.handle_user_agreement():
                 continue
+            if self.handle_account_confirm():
+                continue
             # Additional
             if self.handle_popup_single():
                 continue
@@ -127,6 +129,15 @@ class Login(LoginAndroidCloud, RogueUI, AgreementHandler, UIDHandler):
         Returns:
             bool: If clicked
         """
+        # 4.2 SilverWolfLV999 popup
+        if self.match_template_luma(ADVERTISE_SilverWolfLV999, interval=2):
+            logger.info(f'{ADVERTISE_SilverWolfLV999} -> {CLOSE}')
+            self.device.click(CLOSE)
+            return True
+        # 4.0 ADVERTISE for new world
+        if self.match_template_luma(ADVERTISE_Planarcadia, interval=2):
+            self.device.click(ADVERTISE_Planarcadia)
+            return True
         # 3.7 ADVERTISE_Cyrene popup
         if self.match_template_luma(ADVERTISE_Cyrene, interval=2):
             logger.info(f'{ADVERTISE_Cyrene} -> {CLOSE}')

@@ -21,6 +21,7 @@
           "auto",
           "CN-Official",
           "CN-Bilibili",
+          "VN-Official",
           "OVERSEA-America",
           "OVERSEA-Asia",
           "OVERSEA-Europe",
@@ -387,6 +388,12 @@
         "display": "display",
         "stored": "StoredPlanner"
       },
+      "Item_Thunder_Strum": {
+        "type": "planner",
+        "value": {},
+        "display": "display",
+        "stored": "StoredPlanner"
+      },
       "Item_Charred_Bud_of_Twilight": {
         "type": "planner",
         "value": {},
@@ -490,6 +497,24 @@
         "stored": "StoredPlanner"
       },
       "Item_Flower_of_Alaya": {
+        "type": "planner",
+        "value": {},
+        "display": "display",
+        "stored": "StoredPlanner"
+      },
+      "Item_The_Fluffy_Collector_Edition": {
+        "type": "planner",
+        "value": {},
+        "display": "display",
+        "stored": "StoredPlanner"
+      },
+      "Item_Lance_of_Retribution": {
+        "type": "planner",
+        "value": {},
+        "display": "display",
+        "stored": "StoredPlanner"
+      },
+      "Item_Heart_of_Phagousa": {
         "type": "planner",
         "value": {},
         "display": "display",
@@ -608,6 +633,12 @@
         "value": {},
         "display": "display",
         "stored": "StoredPlanner"
+      },
+      "Item_Lucid_Awl": {
+        "type": "planner",
+        "value": {},
+        "display": "display",
+        "stored": "StoredPlanner"
       }
     },
     "PlannerTarget": {
@@ -631,6 +662,11 @@
         "display": "hide",
         "option": [
           "_none_",
+          "SilverWolfLV999",
+          "Evanescia",
+          "Ashveil",
+          "Sparxie",
+          "YaoGuang",
           "TheDahlia",
           "Cyrene",
           "Evernight",
@@ -691,6 +727,7 @@
           "TrailblazerPreservation",
           "TrailblazerHarmony",
           "TrailblazerRemembrance",
+          "TrailblazerElation",
           "Himeko",
           "Welt",
           "Gepard",
@@ -720,6 +757,11 @@
         "display": "hide",
         "option": [
           "_none_",
+          "Until_the_Flowers_Bloom_Again",
+          "Welcome_to_the_Cosmic_City",
+          "The_Finale_of_a_Lie",
+          "When_She_Decided_to_See",
+          "Dazzled_by_a_Flowery_World",
           "This_Love_Forever",
           "Though_Worlds_Apart",
           "Never_Forget_Her_Flame",
@@ -764,6 +806,7 @@
           "Incessant_Rain",
           "Patience_Is_All_You_Need",
           "In_the_Night",
+          "Elation_Brimming_With_Blessings",
           "Memory_Curtain_Never_Falls",
           "Eternal_Calculus",
           "Solitary_Healing",
@@ -779,6 +822,7 @@
           "But_the_Battle_Isn_t_Over",
           "Something_Irreplaceable",
           "Night_on_the_Milky_Way",
+          "Tomorrow_Together",
           "Fly_Into_a_Pink_Tomorrow",
           "The_Forever_Victual",
           "The_Great_Cosmic_Enterprise",
@@ -786,6 +830,8 @@
           "For_Tomorrow_Journey",
           "Hey_Over_Here",
           "Before_the_Tutorial_Mission_Starts",
+          "Today_Good_Luck",
+          "Mushy_Shroomy_Adventures",
           "See_You_at_the_End",
           "Holiday_Thermae_Escapade",
           "A_Dream_Scented_in_Wheat",
@@ -847,6 +893,8 @@
           "Day_One_of_My_New_Life",
           "Good_Night_and_Sleep_Well",
           "Post_Op_Conversation",
+          "Lingering_Tear",
+          "Sneering",
           "Reminiscence",
           "Shadowburn",
           "Sagacity",
@@ -879,6 +927,7 @@
         "display": "hide",
         "option": [
           "_none_",
+          "Cavern_of_Corrosion_Path_of_Possession",
           "Cavern_of_Corrosion_Path_of_Hidden_Salvation",
           "Cavern_of_Corrosion_Path_of_Thundersurge",
           "Cavern_of_Corrosion_Path_of_Aria",
@@ -902,6 +951,7 @@
         "display": "hide",
         "option": [
           "_none_",
+          "Divergent_Universe_Gilded_Recollection",
           "Divergent_Universe_Within_the_West_Wind",
           "Divergent_Universe_Moonlit_Blood",
           "Divergent_Universe_Unceasing_Strife",
@@ -1057,6 +1107,7 @@
         "type": "select",
         "value": "Calyx_Golden_Treasures_Jarilo_VI",
         "option": [
+          "Cavern_of_Corrosion_Path_of_Possession",
           "Cavern_of_Corrosion_Path_of_Hidden_Salvation",
           "Cavern_of_Corrosion_Path_of_Thundersurge",
           "Cavern_of_Corrosion_Path_of_Aria",
@@ -1071,14 +1122,17 @@
           "Cavern_of_Corrosion_Path_of_Drifting",
           "Cavern_of_Corrosion_Path_of_Jabbing_Punch",
           "Cavern_of_Corrosion_Path_of_Gelid_Wind",
+          "Calyx_Golden_Memories_Planarcadia",
           "Calyx_Golden_Memories_Amphoreus",
           "Calyx_Golden_Memories_Penacony",
           "Calyx_Golden_Memories_The_Xianzhou_Luofu",
           "Calyx_Golden_Memories_Jarilo_VI",
+          "Calyx_Golden_Aether_Planarcadia",
           "Calyx_Golden_Aether_Amphoreus",
           "Calyx_Golden_Aether_Penacony",
           "Calyx_Golden_Aether_The_Xianzhou_Luofu",
           "Calyx_Golden_Aether_Jarilo_VI",
+          "Calyx_Golden_Treasures_Planarcadia",
           "Calyx_Golden_Treasures_Amphoreus",
           "Calyx_Golden_Treasures_Penacony",
           "Calyx_Golden_Treasures_The_Xianzhou_Luofu",
@@ -1089,6 +1143,7 @@
           "Calyx_Crimson_Preservation_Penacony_ClockStudiosThemePark",
           "Calyx_Crimson_The_Hunt_Jarilo_OutlyingSnowPlains",
           "Calyx_Crimson_The_Hunt_Penacony_SoulGladScorchsandAuditionVenue",
+          "Calyx_Crimson_The_Hunt_Amphoreus_MemortisShoreRuinsofTime",
           "Calyx_Crimson_Abundance_Jarilo_BackwaterPass",
           "Calyx_Crimson_Abundance_Luofu_FyxestrollGarden",
           "Calyx_Crimson_Erudition_Jarilo_RivetTown",
@@ -1097,13 +1152,16 @@
           "Calyx_Crimson_Harmony_Penacony_TheReverieDreamscape",
           "Calyx_Crimson_Nihility_Jarilo_GreatMine",
           "Calyx_Crimson_Nihility_Luofu_AlchemyCommission",
+          "Calyx_Crimson_Nihility_Amphoreus_RadiantScarwoodGroveofEpiphany",
           "Calyx_Crimson_Remembrance_Amphoreus_StrifeRuinsCastrumKremnos",
+          "Calyx_Crimson_Elation_Planarcadia_WorldEndTavern",
           "Stagnant_Shadow_Spike",
           "Stagnant_Shadow_Perdition",
           "Stagnant_Shadow_Duty",
           "Stagnant_Shadow_Deepsheaf",
           "Stagnant_Shadow_Blaze",
           "Stagnant_Shadow_Scorch",
+          "Stagnant_Shadow_Roast",
           "Stagnant_Shadow_Ire",
           "Stagnant_Shadow_Ashes",
           "Stagnant_Shadow_Rime",
@@ -1113,13 +1171,13 @@
           "Stagnant_Shadow_Fulmination",
           "Stagnant_Shadow_Doom",
           "Stagnant_Shadow_Mechwolf",
+          "Stagnant_Shadow_Soundburst",
           "Stagnant_Shadow_Gust",
           "Stagnant_Shadow_Celestial",
           "Stagnant_Shadow_Gloam",
           "Stagnant_Shadow_Cinders",
           "Stagnant_Shadow_Quanta",
           "Stagnant_Shadow_Abomination",
-          "Stagnant_Shadow_Roast",
           "Stagnant_Shadow_Gelidmoon",
           "Stagnant_Shadow_Mirage",
           "Stagnant_Shadow_Puppetry",
@@ -1131,14 +1189,17 @@
         "type": "select",
         "value": "Calyx_Golden_Treasures_Jarilo_VI",
         "option": [
+          "Calyx_Golden_Memories_Planarcadia",
           "Calyx_Golden_Memories_Amphoreus",
           "Calyx_Golden_Memories_Penacony",
           "Calyx_Golden_Memories_The_Xianzhou_Luofu",
           "Calyx_Golden_Memories_Jarilo_VI",
+          "Calyx_Golden_Aether_Planarcadia",
           "Calyx_Golden_Aether_Amphoreus",
           "Calyx_Golden_Aether_Penacony",
           "Calyx_Golden_Aether_The_Xianzhou_Luofu",
           "Calyx_Golden_Aether_Jarilo_VI",
+          "Calyx_Golden_Treasures_Planarcadia",
           "Calyx_Golden_Treasures_Amphoreus",
           "Calyx_Golden_Treasures_Penacony",
           "Calyx_Golden_Treasures_The_Xianzhou_Luofu",
@@ -1149,6 +1210,7 @@
           "Calyx_Crimson_Preservation_Penacony_ClockStudiosThemePark",
           "Calyx_Crimson_The_Hunt_Jarilo_OutlyingSnowPlains",
           "Calyx_Crimson_The_Hunt_Penacony_SoulGladScorchsandAuditionVenue",
+          "Calyx_Crimson_The_Hunt_Amphoreus_MemortisShoreRuinsofTime",
           "Calyx_Crimson_Abundance_Jarilo_BackwaterPass",
           "Calyx_Crimson_Abundance_Luofu_FyxestrollGarden",
           "Calyx_Crimson_Erudition_Jarilo_RivetTown",
@@ -1157,13 +1219,16 @@
           "Calyx_Crimson_Harmony_Penacony_TheReverieDreamscape",
           "Calyx_Crimson_Nihility_Jarilo_GreatMine",
           "Calyx_Crimson_Nihility_Luofu_AlchemyCommission",
-          "Calyx_Crimson_Remembrance_Amphoreus_StrifeRuinsCastrumKremnos"
+          "Calyx_Crimson_Nihility_Amphoreus_RadiantScarwoodGroveofEpiphany",
+          "Calyx_Crimson_Remembrance_Amphoreus_StrifeRuinsCastrumKremnos",
+          "Calyx_Crimson_Elation_Planarcadia_WorldEndTavern"
         ]
       },
       "NameAtDoubleRelic": {
         "type": "select",
         "value": "Cavern_of_Corrosion_Path_of_Providence",
         "option": [
+          "Cavern_of_Corrosion_Path_of_Possession",
           "Cavern_of_Corrosion_Path_of_Hidden_Salvation",
           "Cavern_of_Corrosion_Path_of_Thundersurge",
           "Cavern_of_Corrosion_Path_of_Aria",
@@ -1213,6 +1278,11 @@
         "value": "FirstCharacter",
         "option": [
           "FirstCharacter",
+          "SilverWolfLV999",
+          "Evanescia",
+          "Ashveil",
+          "Sparxie",
+          "YaoGuang",
           "TheDahlia",
           "Cyrene",
           "Evernight",
@@ -1273,6 +1343,7 @@
           "TrailblazerPreservation",
           "TrailblazerHarmony",
           "TrailblazerRemembrance",
+          "TrailblazerElation",
           "Himeko",
           "Welt",
           "Gepard",
@@ -1293,6 +1364,16 @@
           "Tingyun",
           "Pela",
           "Natasha"
+        ]
+      },
+      "Replace": {
+        "type": "select",
+        "value": 4,
+        "option": [
+          1,
+          2,
+          3,
+          4
         ]
       }
     },
@@ -1402,6 +1483,7 @@
         "type": "select",
         "value": "Divergent_Universe_Eternal_Comedy",
         "option": [
+          "Divergent_Universe_Gilded_Recollection",
           "Divergent_Universe_Within_the_West_Wind",
           "Divergent_Universe_Moonlit_Blood",
           "Divergent_Universe_Unceasing_Strife",
@@ -1416,12 +1498,11 @@
           "Divergent_Universe_Untoppled_Walls"
         ]
       },
-      "Team": {
+      "Team40": {
         "type": "select",
-        "value": 1,
-        "keepvalue": true,
-        "display": "hide",
+        "value": 0,
         "option": [
+          0,
           1,
           2,
           3,
@@ -1475,6 +1556,11 @@
         "value": "FirstCharacter",
         "option": [
           "FirstCharacter",
+          "SilverWolfLV999",
+          "Evanescia",
+          "Ashveil",
+          "Sparxie",
+          "YaoGuang",
           "TheDahlia",
           "Cyrene",
           "Evernight",
@@ -1535,6 +1621,7 @@
           "TrailblazerPreservation",
           "TrailblazerHarmony",
           "TrailblazerRemembrance",
+          "TrailblazerElation",
           "Himeko",
           "Welt",
           "Gepard",
@@ -1555,6 +1642,16 @@
           "Tingyun",
           "Pela",
           "Natasha"
+        ]
+      },
+      "Replace": {
+        "type": "select",
+        "value": 4,
+        "option": [
+          1,
+          2,
+          3,
+          4
         ]
       }
     },
@@ -2051,7 +2148,7 @@
     "Weekly": {
       "Name": {
         "type": "select",
-        "value": "Echo_of_War_Divine_Seed",
+        "value": "Echo_of_War_Rusted_Crypt_of_the_Iron_Carcass",
         "options": [],
         "option": [
           "Echo_of_War_Rusted_Crypt_of_the_Iron_Carcass",
@@ -2094,6 +2191,11 @@
         "value": "FirstCharacter",
         "option": [
           "FirstCharacter",
+          "SilverWolfLV999",
+          "Evanescia",
+          "Ashveil",
+          "Sparxie",
+          "YaoGuang",
           "TheDahlia",
           "Cyrene",
           "Evernight",
@@ -2154,6 +2256,7 @@
           "TrailblazerPreservation",
           "TrailblazerHarmony",
           "TrailblazerRemembrance",
+          "TrailblazerElation",
           "Himeko",
           "Welt",
           "Gepard",
@@ -2174,6 +2277,16 @@
           "Tingyun",
           "Pela",
           "Natasha"
+        ]
+      },
+      "Replace": {
+        "type": "select",
+        "value": 4,
+        "option": [
+          1,
+          2,
+          3,
+          4
         ]
       }
     }
