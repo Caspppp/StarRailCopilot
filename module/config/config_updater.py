@@ -876,6 +876,19 @@ class ConfigUpdater:
         return new
 
     @staticmethod
+    def normalize_forgotten_hall_preset_teams(data) -> t.List[str]:
+        # Forgotten Hall preset teams must be different.
+        team1_key = 'ForgottenHallChallenge.ForgottenHallChallenge.Team1Preset'
+        team2_key = 'ForgottenHallChallenge.ForgottenHallChallenge.Team2Preset'
+        team1_preset = deep_get(data, keys=team1_key)
+        team2_preset = deep_get(data, keys=team2_key)
+        if team1_preset == team2_preset and team1_preset is not None:
+            deep_set(data, keys=team2_key, value=2 if team1_preset != 2 else 1)
+            return [team2_key]
+
+        return []
+
+    @staticmethod
     def update_state(data):
         # Limit setting combinations
         if deep_get(data, keys='Rogue.RogueWorld.UseImmersifier') is False:
@@ -890,6 +903,8 @@ class ConfigUpdater:
         # Cloud settings
         if deep_get(data, keys='Alas.Emulator.GameClient') == 'cloud_android':
             deep_set(data, keys='Alas.Emulator.PackageName', value='CN-Official')
+
+        ConfigUpdater.normalize_forgotten_hall_preset_teams(data)
 
         return data
 

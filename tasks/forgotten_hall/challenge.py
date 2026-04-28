@@ -5,8 +5,11 @@
 支持自动选关模式：自动扫描关卡星数，从最高未完成关卡开始挑战。
 """
 
+from dataclasses import dataclass
+
 from module.logger import logger
 from module.base.timer import Timer
+from tasks.base.assets.assets_base_page import FORGOTTEN_HALL_CHECK
 from tasks.forgotten_hall.ui import ForgottenHallUI
 from tasks.forgotten_hall.keywords import KEYWORDS_FORGOTTEN_HALL_STAGE
 from tasks.forgotten_hall.challenge_modes.apocalyptic_shadow import MODE as APOCALYPTIC_SHADOW_MODE
@@ -20,6 +23,13 @@ DUNGEON_MODES = {
     PURE_FICTION_MODE.dungeon_type: PURE_FICTION_MODE,
     APOCALYPTIC_SHADOW_MODE.dungeon_type: APOCALYPTIC_SHADOW_MODE,
 }
+
+
+@dataclass(frozen=True)
+class HalfBattleResult:
+    success: bool
+    attempts: int
+    reason: str = ''
 
 
 class ForgottenHallChallenge(ForgottenHallUI):
@@ -108,6 +118,62 @@ class ForgottenHallChallenge(ForgottenHallUI):
         except (TypeError, ValueError):
             text = str(value).strip()
             return text if text else 0
+
+    def _battle_end_checker(self, battle_num: int, include_pure_fiction_return: bool = False):
+        from tasks.combat.assets.assets_combat_finish import COMBAT_AGAIN
+        from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import BATTLE_FAILED, RETURN_TO_FORGOTTEN_HALL
+        from tasks.base.assets.assets_base_page import FORGOTTEN_HALL_CHECK
+        from tasks.forgotten_hall.assets.assets_pure_fiction_ui import PURE_FICTION_RETURN
+
+        timer_attr = '_battle1_end_stuck_timer' if battle_num == 1 else '_battle_end_stuck_timer'
+        log_prefix = f'Battle {battle_num} is_battle_end'
+
+        def is_battle_end():
+            """Check if battle has ended (success or failure)."""
+            if not hasattr(self, timer_attr):
+                setattr(self, timer_attr, Timer(10).start())
+
+            timer = getattr(self, timer_attr)
+            if timer.reached():
+                logger.info(f'[{log_prefix}] Clear stuck record (10s interval)')
+                self.device.stuck_record_clear()
+                timer.reset()
+
+            if self.appear(BATTLE_FAILED, interval=0.5):
+                logger.info(f'[{log_prefix}] BATTLE_FAILED detected')
+                return True
+
+            if self.appear(RETURN_TO_FORGOTTEN_HALL, interval=0.5):
+                logger.info(f'[{log_prefix}] RETURN_TO_FORGOTTEN_HALL detected')
+                return True
+
+            if self.appear(COMBAT_AGAIN, interval=0.5):
+                logger.info(f'[{log_prefix}] COMBAT_AGAIN detected')
+                return True
+
+            if include_pure_fiction_return and self.appear(PURE_FICTION_RETURN, interval=0.5):
+                logger.info(f'[{log_prefix}] PURE_FICTION_RETURN detected')
+                return True
+
+            if self.appear(FORGOTTEN_HALL_CHECK, interval=0.5):
+                logger.info(f'[{log_prefix}] FORGOTTEN_HALL_CHECK detected')
+                return True
+
+            return False
+
+        return is_battle_end
+
+    def _execute_battle_combat(self, battle_num: int, include_pure_fiction_return: bool = False) -> bool:
+        from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import BATTLE_FAILED
+
+        self.combat_execute(
+            expected_end=self._battle_end_checker(
+                battle_num=battle_num,
+                include_pure_fiction_return=include_pure_fiction_return,
+            )
+        )
+        self.device.screenshot()
+        return not self.appear(BATTLE_FAILED)
 
     def run(self):
         """主执行方法"""
@@ -241,45 +307,7 @@ class ForgottenHallChallenge(ForgottenHallUI):
                 continue
 
             logger.info(f'Battle 1 Attempt {attempt}: Executing combat')
-
-            from module.base.timer import Timer
-            from tasks.combat.assets.assets_combat_finish import COMBAT_AGAIN
-            from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import BATTLE_FAILED, RETURN_TO_FORGOTTEN_HALL
-            from tasks.base.assets.assets_base_page import FORGOTTEN_HALL_CHECK
-
-            def is_battle_end():
-                """Check if battle has ended (success or failure)."""
-                if not hasattr(self, '_battle1_end_stuck_timer'):
-                    self._battle1_end_stuck_timer = Timer(10).start()
-
-                if self._battle1_end_stuck_timer.reached():
-                    logger.info('[Battle 1 is_battle_end] Clear stuck record (10s interval)')
-                    self.device.stuck_record_clear()
-                    self._battle1_end_stuck_timer.reset()
-
-                if self.appear(BATTLE_FAILED, interval=0.5):
-                    logger.info('[Battle 1 is_battle_end] BATTLE_FAILED detected')
-                    return True
-
-                if self.appear(RETURN_TO_FORGOTTEN_HALL, interval=0.5):
-                    logger.info('[Battle 1 is_battle_end] RETURN_TO_FORGOTTEN_HALL detected')
-                    return True
-
-                if self.appear(COMBAT_AGAIN, interval=0.5):
-                    logger.info('[Battle 1 is_battle_end] COMBAT_AGAIN detected')
-                    return True
-
-                if self.appear(FORGOTTEN_HALL_CHECK, interval=0.5):
-                    logger.info('[Battle 1 is_battle_end] FORGOTTEN_HALL_CHECK detected')
-                    return True
-
-                return False
-
-            self.combat_execute(expected_end=is_battle_end)
-
-            self.device.screenshot()
-
-            if self.appear(BATTLE_FAILED):
+            if not self._execute_battle_combat(battle_num=1):
                 logger.warning(f'Battle 1 failed on attempt {attempt}/{max_retries}')
 
                 if not self.handle_battle_failure():
@@ -298,15 +326,21 @@ class ForgottenHallChallenge(ForgottenHallUI):
             battle1_success = True
             break
 
-        if not battle1_success:
+        battle1_result = HalfBattleResult(
+            success=battle1_success,
+            attempts=attempts_battle1,
+            reason='' if battle1_success else 'max_retries',
+        )
+
+        if not battle1_result.success:
             logger.hr('Battle 1 Failed', level=1)
-            logger.attr('Attempts', attempts_battle1)
+            logger.attr('Attempts', battle1_result.attempts)
             logger.error('Battle 1 failed after maximum retries')
             logger.info('Currently at stage selection screen')
             return False
 
         logger.hr('Battle 1 Completed Successfully', level=1)
-        logger.attr('Attempts', attempts_battle1)
+        logger.attr('Attempts', battle1_result.attempts)
         logger.info('Proceeding to Battle 2 (Lower Half)')
 
         logger.hr('Battle 2: Lower Half', level=2)
@@ -334,49 +368,7 @@ class ForgottenHallChallenge(ForgottenHallUI):
                 continue
 
             logger.info(f'Battle 2 Attempt {attempt}: Executing combat')
-
-            from module.base.timer import Timer
-            from tasks.combat.assets.assets_combat_finish import COMBAT_AGAIN
-            from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import BATTLE_FAILED, RETURN_TO_FORGOTTEN_HALL
-            from tasks.base.assets.assets_base_page import FORGOTTEN_HALL_CHECK
-
-            def is_battle_end():
-                """Check if battle has ended (success or failure)."""
-                if not hasattr(self, '_battle_end_stuck_timer'):
-                    self._battle_end_stuck_timer = Timer(10).start()
-
-                if self._battle_end_stuck_timer.reached():
-                    logger.info('[Battle 2 is_battle_end] Clear stuck record (10s interval)')
-                    self.device.stuck_record_clear()
-                    self._battle_end_stuck_timer.reset()
-
-                if self.appear(BATTLE_FAILED, interval=0.5):
-                    logger.info('[Battle 2 is_battle_end] BATTLE_FAILED detected')
-                    return True
-
-                if self.appear(RETURN_TO_FORGOTTEN_HALL, interval=0.5):
-                    logger.info('[Battle 2 is_battle_end] RETURN_TO_FORGOTTEN_HALL detected')
-                    return True
-
-                if self.appear(COMBAT_AGAIN, interval=0.5):
-                    logger.info('[Battle 2 is_battle_end] COMBAT_AGAIN detected')
-                    return True
-
-                if self.appear(FORGOTTEN_HALL_CHECK, interval=0.5):
-                    logger.info('[Battle 2 is_battle_end] FORGOTTEN_HALL_CHECK detected')
-                    return True
-
-                return False
-
-            self.combat_execute(expected_end=is_battle_end)
-
-            self.device.screenshot()
-            if self.appear(BATTLE_FAILED):
-                result = 'failure'
-            else:
-                result = 'success'
-
-            if result == 'success':
+            if self._execute_battle_combat(battle_num=2):
                 logger.info(f'Battle 2 succeeded on attempt {attempt}/{max_retries}')
                 self.handle_battle_success()
                 if self.is_in_main() and not self.appear(FORGOTTEN_HALL_CHECK):
@@ -399,24 +391,30 @@ class ForgottenHallChallenge(ForgottenHallUI):
             logger.info(f'Re-entering dungeon for Battle 2 retry attempt {attempt + 1}')
             self.enter_forgotten_hall_dungeon(skip_first_screenshot=False)
 
-        if battle2_success:
+        battle2_result = HalfBattleResult(
+            success=battle2_success,
+            attempts=attempts_battle2,
+            reason='' if battle2_success else 'max_retries',
+        )
+
+        if battle2_result.success:
             logger.hr('Battle 2 Completed Successfully', level=1)
-            logger.attr('Attempts', attempts_battle2)
+            logger.attr('Attempts', battle2_result.attempts)
             logger.info('Both battles completed, returned to forgotten hall')
 
             logger.hr('Challenge Complete - All Battles Successful', level=1)
-            logger.attr('Battle 1 Attempts', attempts_battle1)
-            logger.attr('Battle 2 Attempts', attempts_battle2)
+            logger.attr('Battle 1 Attempts', battle1_result.attempts)
+            logger.attr('Battle 2 Attempts', battle2_result.attempts)
             return True
 
         logger.hr('Battle 2 Failed', level=1)
-        logger.attr('Attempts', attempts_battle2)
+        logger.attr('Attempts', battle2_result.attempts)
         logger.error('Battle 2 failed after maximum retries')
         logger.info('Currently at stage selection screen')
 
         logger.hr('Challenge Incomplete - Battle 2 Failed', level=1)
-        logger.attr('Battle 1 Attempts', attempts_battle1)
-        logger.attr('Battle 2 Attempts', attempts_battle2)
+        logger.attr('Battle 1 Attempts', battle1_result.attempts)
+        logger.attr('Battle 2 Attempts', battle2_result.attempts)
         return False
 
     def run_auto_selection(self, dungeon_type: str | None = None):
@@ -495,12 +493,6 @@ class ForgottenHallChallenge(ForgottenHallUI):
             return (False, 0)
 
         # 执行 Battle 1 (上半) - Standard SRC pattern
-        from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import BATTLE_FAILED
-        from tasks.combat.assets.assets_combat_finish import COMBAT_AGAIN
-        from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import RETURN_TO_FORGOTTEN_HALL
-        from tasks.base.assets.assets_base_page import FORGOTTEN_HALL_CHECK
-        from tasks.forgotten_hall.assets.assets_pure_fiction_ui import PURE_FICTION_RETURN
-
         logger.hr('Battle 1: Upper Half', level=2)
 
         # Step 1: Enter dungeon
@@ -513,32 +505,8 @@ class ForgottenHallChallenge(ForgottenHallUI):
             self.exit_dungeon()
             return (False, 0)
 
-        # Step 3: Execute combat with battle end detection
-        def is_battle_end():
-            if not hasattr(self, '_battle1_end_stuck_timer'):
-                self._battle1_end_stuck_timer = Timer(10).start()
-
-            if self._battle1_end_stuck_timer.reached():
-                self.device.stuck_record_clear()
-                self._battle1_end_stuck_timer.reset()
-
-            if self.appear(BATTLE_FAILED, interval=0.5):
-                return True
-            if self.appear(RETURN_TO_FORGOTTEN_HALL, interval=0.5):
-                return True
-            if self.appear(COMBAT_AGAIN, interval=0.5):
-                return True
-            if self.appear(PURE_FICTION_RETURN, interval=0.5):
-                return True
-            if self.appear(FORGOTTEN_HALL_CHECK, interval=0.5):
-                return True
-            return False
-
-        self.combat_execute(expected_end=is_battle_end)
-
-        # Step 4: Check result
-        self.device.screenshot()
-        if self.appear(BATTLE_FAILED):
+        # Step 3-4: Execute combat with battle end detection and check result
+        if not self._execute_battle_combat(battle_num=1, include_pure_fiction_return=True):
             logger.warning('Battle 1 failed')
             self.handle_battle_failure()
             return (False, 0)
@@ -554,37 +522,8 @@ class ForgottenHallChallenge(ForgottenHallUI):
             self.exit_dungeon()
             return (False, 0)
 
-        # 执行战斗
-        from tasks.combat.assets.assets_combat_finish import COMBAT_AGAIN
-        from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import RETURN_TO_FORGOTTEN_HALL
-        from tasks.base.assets.assets_base_page import FORGOTTEN_HALL_CHECK
-        from tasks.forgotten_hall.assets.assets_pure_fiction_ui import PURE_FICTION_RETURN
-
-        def is_battle_end():
-            if not hasattr(self, '_battle_end_stuck_timer'):
-                self._battle_end_stuck_timer = Timer(10).start()
-
-            if self._battle_end_stuck_timer.reached():
-                self.device.stuck_record_clear()
-                self._battle_end_stuck_timer.reset()
-
-            if self.appear(BATTLE_FAILED, interval=0.5):
-                return True
-            if self.appear(RETURN_TO_FORGOTTEN_HALL, interval=0.5):
-                return True
-            if self.appear(COMBAT_AGAIN, interval=0.5):
-                return True
-            if self.appear(PURE_FICTION_RETURN, interval=0.5):
-                return True
-            if self.appear(FORGOTTEN_HALL_CHECK, interval=0.5):
-                return True
-            return False
-
-        self.combat_execute(expected_end=is_battle_end)
-
-        # 判断战斗结果
-        self.device.screenshot()
-        if self.appear(BATTLE_FAILED):
+        # 执行战斗并判断战斗结果
+        if not self._execute_battle_combat(battle_num=2, include_pure_fiction_return=True):
             logger.warning('Battle 2 failed')
             self.handle_battle_failure()
             return (False, 0)

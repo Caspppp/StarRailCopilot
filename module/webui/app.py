@@ -498,6 +498,22 @@ class AlasGUI(Frame):
             options_label = []
             for opt in options:
                 options_label.append(t(f"{group_name}.{arg_name}.{opt}"))
+            option_exclude = output_kwargs.pop("option_exclude", None)
+            if option_exclude:
+                if "." in option_exclude:
+                    exclude_path = option_exclude.split(".")
+                else:
+                    exclude_path = [task, group_name, option_exclude]
+                exclude_value = deep_get(config, exclude_path)
+                if exclude_value != value:
+                    option_pairs = [
+                        (opt, opt_label)
+                        for opt, opt_label in zip(options, options_label)
+                        if opt != exclude_value
+                    ]
+                    options = [opt for opt, _ in option_pairs]
+                    options_label = [opt_label for _, opt_label in option_pairs]
+                    output_kwargs["options"] = options
             output_kwargs["options_label"] = options_label
             # Help
             arg_help = t(f"{group_name}.{arg_name}.help")
@@ -734,6 +750,11 @@ class AlasGUI(Frame):
                     modified.pop(k)
                     invalid.append(k)
                     logger.warning(f"Invalid value {v} for key {k}, skip saving.")
+            for set_key in config_updater.normalize_forgotten_hall_preset_teams(config):
+                set_value = deep_get(config, set_key)
+                modified[set_key] = set_value
+                valid.append(set_key)
+                pin["_".join(set_key.split("."))] = to_pin_value(set_value)
             self.pin_remove_invalid_mark(valid)
             self.pin_set_invalid_mark(invalid)
             new_hidden_args = config_updater.get_hidden_args(config)

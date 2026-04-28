@@ -357,7 +357,7 @@
       "DungeonType": "Memory_of_Chaos",
       "Stage": 10,
       "Team1Preset": 1,
-      "Team2Preset": 1,
+      "Team2Preset": 2,
       "Team1Buff": "",
       "Team2Buff": "",
       "AutoStageSelection": true,

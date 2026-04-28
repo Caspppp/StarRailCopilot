@@ -2600,11 +2600,12 @@
           10,
           11,
           12
-        ]
+        ],
+        "option_exclude": "Team2Preset"
       },
       "Team2Preset": {
         "type": "select",
-        "value": 1,
+        "value": 2,
         "option": [
           1,
           2,
@@ -2618,7 +2619,8 @@
           10,
           11,
           12
-        ]
+        ],
+        "option_exclude": "Team1Preset"
       },
       "Team1Buff": {
         "type": "input",

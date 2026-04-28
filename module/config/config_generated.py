@@ -260,7 +260,7 @@ class GeneratedConfig:
     ForgottenHallChallenge_DungeonType = 'Memory_of_Chaos'  # Memory_of_Chaos, Pure_Fiction, Apocalyptic_Shadow
     ForgottenHallChallenge_Stage = 10  # 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
     ForgottenHallChallenge_Team1Preset = 1  # 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
-    ForgottenHallChallenge_Team2Preset = 1  # 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
+    ForgottenHallChallenge_Team2Preset = 2  # 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
     ForgottenHallChallenge_AutoStageSelection = True  # True, False
     ForgottenHallChallenge_TargetStars = 3  # 1, 2, 3
     ForgottenHallChallenge_MinStage = 1  # 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12
