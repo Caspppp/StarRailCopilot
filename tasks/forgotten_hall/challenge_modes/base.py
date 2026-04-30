@@ -3,10 +3,28 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from module.exception import (
+    GameBugError,
+    GameNotRunningError,
+    GamePageUnknownError,
+    GameStuckError,
+    GameTooManyClickError,
+    HandledError,
+)
 from module.logger import logger
 
 if TYPE_CHECKING:
     from tasks.forgotten_hall.challenge import ForgottenHallChallenge
+
+
+SCHEDULER_HANDLED_ERRORS = (
+    GameNotRunningError,
+    GameStuckError,
+    GameTooManyClickError,
+    GameBugError,
+    GamePageUnknownError,
+    HandledError,
+)
 
 
 @dataclass(frozen=True)
@@ -157,6 +175,8 @@ class StandardDungeonMode:
                             )
                             return False
 
+        except SCHEDULER_HANDLED_ERRORS:
+            raise
         except Exception as e:
             logger.error(f'Auto selection challenge failed: {e}')
             logger.exception(e)

@@ -586,6 +586,22 @@ class ForgottenHallStageOcr(Ocr):
 
 
 class DraggableStageList(DraggableList):
+    def select_row(
+            self,
+            row: Keyword,
+            main: ModuleBase,
+            insight=True,
+            skip_first_screenshot=True,
+            timeout: float = 20.0
+    ):
+        return super().select_row(
+            row=row,
+            main=main,
+            insight=insight,
+            skip_first_screenshot=skip_first_screenshot,
+            timeout=timeout,
+        )
+
     def insight_row(self, row: Keyword, main: ModuleBase, skip_first_screenshot=True, max_retries: int = 10) -> bool:
         """
         导航使指定关卡行可见

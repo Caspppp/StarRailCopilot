@@ -7,6 +7,14 @@
 
 from dataclasses import dataclass
 
+from module.exception import (
+    GameBugError,
+    GameNotRunningError,
+    GamePageUnknownError,
+    GameStuckError,
+    GameTooManyClickError,
+    HandledError,
+)
 from module.logger import logger
 from module.base.timer import Timer
 from tasks.base.assets.assets_base_page import FORGOTTEN_HALL_CHECK
@@ -16,6 +24,15 @@ from tasks.forgotten_hall.challenge_modes.apocalyptic_shadow import MODE as APOC
 from tasks.forgotten_hall.challenge_modes.memory_of_chaos import MODE as MEMORY_OF_CHAOS_MODE
 from tasks.forgotten_hall.challenge_modes.pure_fiction import MODE as PURE_FICTION_MODE
 from tasks.forgotten_hall.challenge_modes.towering_citadel import MODE as TOWERING_CITADEL_MODE
+
+SCHEDULER_HANDLED_ERRORS = (
+    GameNotRunningError,
+    GameStuckError,
+    GameTooManyClickError,
+    GameBugError,
+    GamePageUnknownError,
+    HandledError,
+)
 
 DUNGEON_MODES = {
     MEMORY_OF_CHAOS_MODE.dungeon_type: MEMORY_OF_CHAOS_MODE,
@@ -178,6 +195,7 @@ class ForgottenHallChallenge(ForgottenHallUI):
     def run(self):
         """主执行方法"""
         success = False
+        delay_task = True
         try:
             # 确保游戏已启动并在主界面
             # 如果游戏未运行，会抛出 GameNotRunningError，调度器会自动调用 Restart 任务
@@ -225,13 +243,18 @@ class ForgottenHallChallenge(ForgottenHallUI):
             success = True
             return True
 
+        except SCHEDULER_HANDLED_ERRORS:
+            delay_task = False
+            raise
         except Exception as e:
             logger.error(f'Challenge failed: {e}')
             logger.exception(e)
             return False
         finally:
             # 任务结束时重置 next_run，避免调度器立即重复执行导致死循环
-            if success:
+            if not delay_task:
+                logger.info('Forgotten Hall challenge interrupted by scheduler-handled error')
+            elif success:
                 logger.info('Forgotten Hall challenge completed successfully')
                 self.config.task_delay(server_update=True)
             else:
@@ -444,6 +467,8 @@ class ForgottenHallChallenge(ForgottenHallUI):
                 target_stars=target_stars,
                 min_stage=min_stage,
             )
+        except SCHEDULER_HANDLED_ERRORS:
+            raise
         except Exception as e:
             logger.error(f'Auto selection challenge failed: {e}')
             logger.exception(e)

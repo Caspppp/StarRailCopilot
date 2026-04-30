@@ -1017,7 +1017,11 @@ class ForgottenHallPureFictionMixin:
                 f'(attempt {attempt}/2)'
             )
             self._click_pure_fiction_team_row(team_index)
-            self._click_preset_team(skip_first_screenshot=True, timeout=15)
+            if not self._click_preset_team(skip_first_screenshot=True, timeout=15):
+                logger.warning(
+                    f'[PureFiction] Failed to open preset team panel for team {team_index}, retrying...'
+                )
+                continue
             if not self.select_preset_team(preset_index):
                 logger.warning(
                     f'[PureFiction] Failed to select preset team for team {team_index}, retrying...'
@@ -1066,9 +1070,9 @@ class ForgottenHallPureFictionMixin:
             logger.warning('[PureFiction] Clear icon not found')
         return False
 
-    def _configure_pure_fiction_preset_teams(self, team1_preset: int = None, team2_preset: int = None) -> None:
-        """Configure Pure Fiction preset teams (row 1 & row 2). Best-effort; does not raise."""
-        self._configure_preset_teams_flow(
+    def _configure_pure_fiction_preset_teams(self, team1_preset: int = None, team2_preset: int = None) -> bool:
+        """Configure Pure Fiction preset teams (row 1 & row 2)."""
+        return self._configure_preset_teams_flow(
             team1_preset=team1_preset,
             team2_preset=team2_preset,
             mode_label='PureFiction',

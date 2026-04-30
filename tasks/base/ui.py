@@ -411,6 +411,9 @@ class UI(MainPage):
             return True
         if self.handle_get_character():
             return True
+        quick_complete_handler = getattr(self, 'handle_quick_complete_popup', None)
+        if quick_complete_handler and quick_complete_handler():
+            return True
         if self.handle_forgotten_hall_buff():
             return True
 

@@ -29,6 +29,18 @@ from tasks.forgotten_hall.stage_ocr import STAGE_LIST, detect_unlocked_text
 from tasks.map.control.joystick import JoystickContact
 
 class ForgottenHallBattleMixin:
+    def handle_quick_complete_popup(self, interval=2) -> bool:
+        """Handle the quick-clear reward popup shown after first 3-star clears."""
+        from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import (
+            QUICK_COMPLETE_TITLE, QUICK_COMPLETE_CONFIRM
+        )
+
+        if self.appear(QUICK_COMPLETE_TITLE, interval=interval):
+            logger.info('Quick complete popup detected, clicking confirm')
+            self.device.click(QUICK_COMPLETE_CONFIRM)
+            return True
+        return False
+
     def exit_dungeon(self, skip_first_screenshot=True):
         """
         Pages:
@@ -163,9 +175,6 @@ class ForgottenHallBattleMixin:
             out: FORGOTTEN_HALL_CHECK
         """
         from tasks.combat.assets.assets_combat_finish import COMBAT_AGAIN
-        from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import (
-            QUICK_COMPLETE_TITLE, QUICK_COMPLETE_CONFIRM
-        )
 
         logger.hr('Handle battle success', level=2)
         timeout = Timer(15).start()
@@ -174,9 +183,7 @@ class ForgottenHallBattleMixin:
             self.device.screenshot()
 
             # 处理快速通关弹窗（3星通关时前置关卡奖励解锁提示）
-            if self.appear(QUICK_COMPLETE_TITLE, interval=2):
-                logger.info('Quick complete popup detected, clicking confirm')
-                self.device.click(QUICK_COMPLETE_CONFIRM)
+            if self.handle_quick_complete_popup(interval=2):
                 continue
 
             if (

@@ -42,61 +42,70 @@ class ForgottenHallPresetTeamMixin:
         clear_all=None,
         clear_team=None,
         apply_team=None,
-    ) -> None:
+    ) -> bool:
         """Shared preset team configuration flow for FH modes."""
         if not (team1_preset or team2_preset):
-            return
+            return True
 
         prefix = f'[{mode_label}] ' if mode_label else ''
 
         if ensure_entry and not ensure_entry():
-            logger.warning(f'{prefix}Team selection entry may have failed, continuing...')
+            logger.error(f'{prefix}Team selection entry failed')
+            return False
 
         if clear_all:
             logger.info(f'{prefix}Clearing existing team selections...')
             clear_all()
             if not self._verify_team_cleared(battle_num=1, timeout=5.0, method=verify_method):
-                logger.warning(f'{prefix}Team slots clear verification timeout, but continuing...')
+                logger.error(f'{prefix}Team slots clear verification timeout')
+                return False
         elif clear_team:
             logger.info(f'{prefix}Clearing existing team selections...')
             for team_index in (1, 2):
                 if focus_team and not focus_team(team_index):
-                    logger.warning(f'{prefix}Failed to select {team_label} {team_index}, continuing...')
+                    logger.error(f'{prefix}Failed to select {team_label} {team_index}')
+                    return False
                 if not clear_team(team_index):
-                    logger.warning(
-                        f'{prefix}{team_label.capitalize()} {team_index} may not be cleared, continuing...'
-                    )
+                    logger.error(f'{prefix}{team_label.capitalize()} {team_index} clear failed')
+                    return False
 
-        def apply_one(team_index: int, preset_index: int) -> None:
+        def apply_one(team_index: int, preset_index: int) -> bool:
             if not preset_index:
-                return
+                return True
             if focus_team and not focus_team(team_index):
-                logger.warning(f'{prefix}Failed to select {team_label} {team_index}, continuing...')
+                logger.error(f'{prefix}Failed to select {team_label} {team_index}')
+                return False
             logger.info(f'{prefix}Configuring {team_label} {team_index} with preset team {preset_index}')
 
             if apply_team:
                 if not apply_team(team_index, preset_index):
-                    logger.warning(
-                        f'{prefix}Failed to apply preset team for {team_label} {team_index}, continuing...'
-                    )
-                return
+                    logger.error(f'{prefix}Failed to apply preset team for {team_label} {team_index}')
+                    return False
+                return True
 
-            self._click_preset_team(skip_first_screenshot=True, timeout=15)
+            if not self._click_preset_team(skip_first_screenshot=True, timeout=15):
+                logger.error(f'{prefix}Failed to open preset team panel for {team_label} {team_index}')
+                return False
             if not self.select_preset_team(preset_index):
-                logger.warning(
-                    f'{prefix}Failed to select preset team for {team_label} {team_index}, continuing...'
-                )
-            self._verify_team_selected_with_retry(
+                logger.error(f'{prefix}Failed to select preset team for {team_label} {team_index}')
+                return False
+            if not self._verify_team_selected_with_retry(
                 battle_num=team_index,
                 max_retry=3,
                 method=verify_method,
-            )
+            ):
+                logger.error(f'{prefix}{team_label.capitalize()} {team_index} selection verification failed')
+                return False
+            return True
 
-        apply_one(1, team1_preset)
-        apply_one(2, team2_preset)
+        if not apply_one(1, team1_preset):
+            return False
+        if not apply_one(2, team2_preset):
+            return False
         logger.info(f'{prefix}Preset teams configuration process completed')
+        return True
 
-    def _click_preset_team(self, skip_first_screenshot=False, timeout=15):
+    def _click_preset_team(self, skip_first_screenshot=False, timeout=15) -> bool:
         """点击预设编队按钮并等待面板打开
 
         Args:
@@ -124,11 +133,10 @@ class ForgottenHallPresetTeamMixin:
             else:
                 self.device.screenshot()
 
-            # 超时检测 - 仅警告，不中断
+            # 超时检测
             if timeout_timer.reached():
                 logger.warning(f'Click preset team timeout after {timeout}s')
-                logger.warning('Preset team panel may not have opened, but continuing...')
-                break
+                return False
 
             # 使用新的预设编队面板检测模板
             if (
@@ -136,7 +144,7 @@ class ForgottenHallPresetTeamMixin:
                 or self.appear(PRESET_TEAM_OPENED, similarity=0.8)
             ):
                 logger.info('Preset team panel opened successfully')
-                break
+                return True
 
             # Pure Fiction: click the "预设编队" tab on the left roster panel.
             if self.appear(PURE_FICTION_PRESET_TAB_SELECTED, interval=0):
@@ -157,6 +165,8 @@ class ForgottenHallPresetTeamMixin:
                 self.device.click(PRESET_TEAM)
                 interval.reset()
                 continue
+
+        return False
 
     def _count_empty_seats(self) -> int:
         seats = (SEAT_1, SEAT_2, SEAT_3, SEAT_4)
@@ -295,8 +305,8 @@ class ForgottenHallPresetTeamMixin:
         max_retry=3,
         retry_delay=2,
         method: str = 'slot',
-    ):
-        """验证队伍选择，失败后重试（最终失败仅警告）
+    ) -> bool:
+        """验证队伍选择，失败后重试
 
         Args:
             battle_num: 关卡编号（1=上半，2=下半）
@@ -311,23 +321,24 @@ class ForgottenHallPresetTeamMixin:
             # 调用现有的 _verify_team_selected() 方法
             if self._verify_team_selected(battle_num=battle_num, method=method):
                 logger.info(f'Battle {battle_num} team selection verified successfully')
-                return  # 验证成功，返回
+                return True
 
             # 验证失败，准备重试
             if attempt < max_retry:
                 logger.warning(f'Battle {battle_num} team verification failed, retrying...')
             else:
-                # 最终失败，仅警告不中断
                 logger.warning(f'Battle {battle_num} team verification failed after {max_retry} attempts')
-                logger.warning('Team may not be correctly selected, but continuing...')
+                return False
+
+        return False
 
     def _configure_preset_teams(
         self,
         team1_preset: int = None,
         team2_preset: int = None,
         verify_method: str = 'slot',
-    ):
-        """配置两关的预设编队（增加等待和验证，失败不中断）
+    ) -> bool:
+        """配置两关的预设编队（增加等待和验证）
 
         Args:
             team1_preset: 第一关使用的预设编队编号 (1-12, 1-based)
@@ -338,10 +349,10 @@ class ForgottenHallPresetTeamMixin:
         def focus_team(team_index: int) -> bool:
             if team_index == 2:
                 logger.info('Switching to battle 2...')
-                self._click_battle_switch_with_wait(2, timeout=5, verify_method=verify_method)
+                return self._click_battle_switch_with_wait(2, timeout=5, verify_method=verify_method)
             return True
 
-        self._configure_preset_teams_flow(
+        return self._configure_preset_teams_flow(
             team1_preset=team1_preset,
             team2_preset=team2_preset,
             team_label='battle',
@@ -457,7 +468,30 @@ class ForgottenHallPresetTeamMixin:
         logger.info(f'Preset team scroll state: total={N_total}, top={k_top}, y_norm={y_norm:.2f}')
         return (True, N_total, k_top)
 
-    def _drag_preset_team_slider(self, target_team: int) -> bool:
+    def _get_preset_team_scroll_top_index(self, total_teams: int) -> tuple[bool, int, float]:
+        """根据给定队伍总数计算当前顶部队伍索引。
+
+        `_get_preset_team_scroll_state()` 里的 total 是从滑块高度反推的粗略估算。
+        点击前需要用本次选择的有效总数重新计算 top，避免拖动少一格后仍按旧 slot 点击。
+        """
+        valid, y_top, y_bot, t_top, t_bot = self._get_preset_team_scroll_thumb(
+            self.device.image
+        )
+        if not valid:
+            return (False, 0, 0.0)
+
+        total_teams = max(4, min(12, total_teams))
+        H_track = t_bot - t_top
+        h = y_bot - y_top + 1
+        y_norm = (y_top - t_top) / max(H_track - h, 1.0)
+
+        max_scroll_teams = max(total_teams - 3, 0)
+        k_top = int(round(y_norm * max_scroll_teams))
+        k_top = max(0, min(max_scroll_teams, k_top))
+        logger.info(f'Preset team scroll top: total={total_teams}, top={k_top}, y_norm={y_norm:.2f}')
+        return (True, k_top, y_norm)
+
+    def _drag_preset_team_slider(self, target_team: int, total_teams: int = None) -> bool:
         """拖动滑块到目标队伍位置
 
         Args:
@@ -479,8 +513,12 @@ class ForgottenHallPresetTeamMixin:
         H_track = float(t_bot - t_top)
         h = float(y_bot - y_top + 1)
 
-        # 获取总队伍数
-        _, N_total, _ = self._get_preset_team_scroll_state()
+        # 获取总队伍数。滚动条高度只能粗略估算；调用方可传入以用户配置为下限的有效总数。
+        if total_teams is None:
+            _, N_total, _ = self._get_preset_team_scroll_state()
+        else:
+            N_total = total_teams
+        N_total = max(4, min(12, N_total))
 
         # 计算目标滑块位置
         max_scroll_teams = max(N_total - 3, 0)
@@ -584,20 +622,48 @@ class ForgottenHallPresetTeamMixin:
                 logger.error(f'Target team {team_index} not available (only {total} teams)')
                 return False
 
-        # 检查目标队伍是否存在
-        if target >= total:
-            logger.error(f'Target team {team_index} not available (only {total} teams)')
-            return False
+        effective_total = max(total, team_index)
+        if effective_total != total:
+            logger.warning(
+                f'Preset team total estimate {total} is lower than requested team {team_index}; '
+                f'use {effective_total} as effective total'
+            )
 
         # 预设编队列表每屏可见 3 个槽位。
-        # 通过“目标队伍索引”推导目标滚动到的顶部索引与点击槽位，避免依赖 top 计算导致 -1/3 之类的越界点击。
-        desired_top = max(0, min(target, total - 3))
-        slot_index = target - desired_top
+        # 先把目标队伍滚到可见范围；真实点击槽位必须在拖动后重新计算。
+        desired_top = max(0, min(target, effective_total - 3))
 
-        logger.info(f'Preset team scroll target: top={desired_top}, slot={slot_index}')
-        if not self._drag_preset_team_slider(desired_top):
-            logger.warning('Preset team slider drag may have failed, continuing...')
-        self.device.screenshot()
+        max_attempts = 2
+        slot_index = None
+        for attempt in range(1, max_attempts + 1):
+            logger.info(f'Preset team scroll target: top={desired_top} (attempt {attempt}/{max_attempts})')
+            if not self._drag_preset_team_slider(desired_top, total_teams=effective_total):
+                logger.error('Preset team slider drag failed')
+                return False
+            self.device.screenshot()
+
+            top_valid, actual_top, _ = self._get_preset_team_scroll_top_index(effective_total)
+            if not top_valid:
+                logger.error('Preset team scroll top unavailable after drag')
+                return False
+
+            candidate_slot = target - actual_top
+            if 0 <= candidate_slot <= 2:
+                slot_index = candidate_slot
+                if actual_top != desired_top:
+                    logger.info(
+                        f'Preset team target visible at adjusted top={actual_top}, slot={slot_index}'
+                    )
+                break
+
+            logger.warning(
+                f'Preset team {team_index} not visible after scroll: top={actual_top}, '
+                f'candidate_slot={candidate_slot}'
+            )
+
+        if slot_index is None:
+            logger.error(f'Failed to make preset team {team_index} visible')
+            return False
 
         if not self._click_preset_team_slot(slot_index):
             return False
@@ -615,8 +681,8 @@ class ForgottenHallPresetTeamMixin:
             logger.info('Switch to battle 2')
             self.device.click(BATTLE_2_SWITCH)
 
-    def _click_battle_switch_with_wait(self, battle_num: int, timeout=5, verify_method: str = 'slot'):
-        """切换到指定关卡并等待验证（失败不中断）
+    def _click_battle_switch_with_wait(self, battle_num: int, timeout=5, verify_method: str = 'slot') -> bool:
+        """切换到指定关卡并等待验证
 
         Args:
             battle_num: 关卡编号（2=下半）
@@ -632,22 +698,20 @@ class ForgottenHallPresetTeamMixin:
                 settle = Timer(min(timeout, 1.0), count=3).start()
                 while not settle.reached():
                     self.device.screenshot()
-                return
+                return True
 
             # 等待并验证切换成功
             timer = Timer(timeout).start()
-            switched = False
 
             while not timer.reached():
                 self.device.screenshot()
                 # 检测下半空白槽位出现
                 if self.appear(TEAM_SLOT_BATTLE2_EMPTY):
                     logger.info('Successfully switched to battle 2')
-                    switched = True
-                    break
+                    return True
 
-            if not switched:
-                logger.warning(f'Battle 2 switch verification timeout after {timeout}s')
-                logger.warning('Switch may have failed, but continuing...')
+            logger.warning(f'Battle 2 switch verification timeout after {timeout}s')
+            return False
         else:
             logger.warning(f'Unsupported battle number: {battle_num}')
+            return False

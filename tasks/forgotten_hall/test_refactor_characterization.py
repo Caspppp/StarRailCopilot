@@ -1,12 +1,17 @@
 from types import SimpleNamespace
 
 import numpy as np
+import pytest
 
+from module.exception import GameNotRunningError, GamePageUnknownError
+from module.ui.draggable_list import DraggableList
 from module.config.config_generated import GeneratedConfig
 from module.config.config_updater import ConfigUpdater
 from module.config.deep import deep_get
+from tasks.dungeon.keywords import KEYWORDS_DUNGEON_LIST
 from tasks.forgotten_hall.challenge import DUNGEON_MODES, ForgottenHallChallenge
 from tasks.forgotten_hall import stage_ocr
+from tasks.forgotten_hall.challenge_modes.base import StandardDungeonMode
 from tasks.forgotten_hall.keywords import ForgottenHallStage, KEYWORDS_FORGOTTEN_HALL_STAGE
 from tasks.forgotten_hall.stage_ocr import ForgottenHallStageOcr, mark_locked_stage_buttons
 from tasks.forgotten_hall.ui import ForgottenHallUI
@@ -68,6 +73,145 @@ def test_forgotten_hall_preset_team_normalization_keeps_teams_distinct():
 
     assert deep_get(data, 'ForgottenHallChallenge.ForgottenHallChallenge.Team1Preset') == 2
     assert deep_get(data, 'ForgottenHallChallenge.ForgottenHallChallenge.Team2Preset') == 1
+
+
+def test_select_preset_team_uses_requested_team_as_total_lower_bound():
+    ui = object.__new__(ForgottenHallUI)
+    calls = []
+    ui.device = SimpleNamespace(screenshot=lambda: None)
+    ui._get_preset_team_scroll_state = lambda: (True, 7, 0)
+    ui._drag_preset_team_slider = lambda target_team, total_teams=None: calls.append(
+        ('drag', target_team, total_teams)
+    ) or True
+    ui._get_preset_team_scroll_top_index = lambda total_teams: (True, 5, 1.0)
+    ui._click_preset_team_slot = lambda slot_index: calls.append(('click', slot_index)) or True
+
+    assert ui.select_preset_team(8) is True
+    assert calls == [('drag', 5, 8), ('click', 2)]
+
+
+def test_select_preset_team_retries_if_drag_stops_before_target_is_visible():
+    ui = object.__new__(ForgottenHallUI)
+    calls = []
+    top_results = [4, 5]
+    ui.device = SimpleNamespace(screenshot=lambda: None)
+    ui._get_preset_team_scroll_state = lambda: (True, 7, 0)
+    ui._drag_preset_team_slider = lambda target_team, total_teams=None: calls.append(
+        ('drag', target_team, total_teams)
+    ) or True
+    ui._get_preset_team_scroll_top_index = lambda total_teams: (True, top_results.pop(0), 1.0)
+    ui._click_preset_team_slot = lambda slot_index: calls.append(('click', slot_index)) or True
+
+    assert ui.select_preset_team(8) is True
+    assert calls == [('drag', 5, 8), ('drag', 5, 8), ('click', 2)]
+
+
+def test_select_preset_team_does_not_click_if_target_remains_invisible_after_drag():
+    ui = object.__new__(ForgottenHallUI)
+    calls = []
+    ui.device = SimpleNamespace(screenshot=lambda: None)
+    ui._get_preset_team_scroll_state = lambda: (True, 7, 0)
+    ui._drag_preset_team_slider = lambda target_team, total_teams=None: calls.append(
+        ('drag', target_team, total_teams)
+    ) or True
+    ui._get_preset_team_scroll_top_index = lambda total_teams: (True, 4, 0.8)
+    ui._click_preset_team_slot = lambda slot_index: calls.append(('click', slot_index)) or True
+
+    assert ui.select_preset_team(8) is False
+    assert calls == [('drag', 5, 8), ('drag', 5, 8)]
+
+
+def test_configure_preset_teams_flow_fails_on_selection_failure():
+    ui = object.__new__(ForgottenHallUI)
+    selected = []
+    ui._click_preset_team = lambda **kwargs: True
+    ui.select_preset_team = lambda preset_index: selected.append(preset_index) or False
+    ui._verify_team_selected_with_retry = lambda **kwargs: (_ for _ in ()).throw(
+        AssertionError('verification should not run after selection failure')
+    )
+
+    assert ui._configure_preset_teams_flow(team1_preset=8, team2_preset=6, team_label='battle') is False
+    assert selected == [8]
+
+
+def test_stage_goto_propagates_preset_team_configuration_failure(monkeypatch):
+    ui = object.__new__(ForgottenHallUI)
+    ui.appear = lambda *args, **kwargs: True
+    ui.stage_choose = lambda dungeon: True
+    ui._click_preset_team = lambda timeout=15: True
+    ui._configure_preset_teams = lambda team1_preset, team2_preset: False
+
+    class FakeStageList:
+        def select_row(self, stage_keyword, main):
+            return True
+
+    monkeypatch.setattr(stage_selection, 'STAGE_LIST', FakeStageList())
+
+    assert ui.stage_goto(
+        KEYWORDS_DUNGEON_LIST.Memory_of_Chaos,
+        KEYWORDS_FORGOTTEN_HALL_STAGE.Stage_9,
+        team1_preset=8,
+        team2_preset=6,
+    ) is False
+
+
+def test_draggable_list_select_row_can_timeout_without_clicking():
+    draggable_list = object.__new__(DraggableList)
+    clicked = []
+    main = SimpleNamespace(device=SimpleNamespace(click=lambda button: clicked.append(button)))
+
+    assert draggable_list.select_row(
+        row='Stage_9',
+        main=main,
+        insight=False,
+        timeout=-1,
+    ) is False
+    assert clicked == []
+
+
+def test_forgotten_hall_run_re_raises_game_not_running_without_delay():
+    task = object.__new__(ForgottenHallChallenge)
+    delays = []
+    task.config = SimpleNamespace(task_delay=lambda **kwargs: delays.append(kwargs))
+
+    def raise_game_not_running():
+        raise GameNotRunningError('Game not running')
+
+    task.ui_goto_main = raise_game_not_running
+
+    with pytest.raises(GameNotRunningError):
+        task.run()
+
+    assert delays == []
+
+
+def test_standard_mode_re_raises_scheduler_handled_errors():
+    mode = StandardDungeonMode(
+        dungeon_type='Memory_of_Chaos',
+        max_stage=12,
+        display_name='混沌回忆',
+    )
+    task = SimpleNamespace(
+        goto_stage_selection_by_dungeon_type=lambda dungeon_type: True,
+        check_and_claim_rewards=lambda skip_first_screenshot=False: False,
+        detect_current_highest_stage=lambda max_stage, target_stars: (10, {10: 0}),
+    )
+
+    def raise_unknown_page(**kwargs):
+        raise GamePageUnknownError
+
+    task._challenge_stage = raise_unknown_page
+
+    with pytest.raises(GamePageUnknownError):
+        mode.run_auto_selection(
+            task,
+            team1_preset=8,
+            team2_preset=6,
+            team1_buff=0,
+            team2_buff=0,
+            target_stars=3,
+            min_stage=1,
+        )
 
 
 def _stage_button(stage_num, area, star_count=0, is_locked=False):
@@ -199,6 +343,34 @@ def test_handle_battle_success_confirms_quick_complete_before_returning():
     ui.handle_popup_single = lambda: False
 
     assert ui.handle_battle_success() is True
+    assert clicked == ['QUICK_COMPLETE_CONFIRM']
+
+
+def test_ui_additional_confirms_quick_complete_popup():
+    ui = object.__new__(ForgottenHallUI)
+    clicked = []
+
+    class FakeDevice:
+        def click(self, button):
+            clicked.append(button.name)
+
+    ui.device = FakeDevice()
+    ui.handle_reward = lambda: False
+    ui.handle_battle_pass_notification = lambda: False
+    ui.handle_monthly_card_reward = lambda: False
+    ui.handle_get_light_cone = lambda: False
+    ui.handle_ui_close = lambda button, interval=0: False
+    ui.handle_ui_back = lambda button, interval=0: False
+    ui.appear_then_click = lambda button, interval=0: False
+    ui.handle_get_character = lambda: False
+    ui.handle_forgotten_hall_buff = lambda: False
+
+    def fake_appear(button, interval=0):
+        return button.name == 'QUICK_COMPLETE_TITLE'
+
+    ui.appear = fake_appear
+
+    assert ui.ui_additional() is True
     assert clicked == ['QUICK_COMPLETE_CONFIRM']
 
 

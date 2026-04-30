@@ -93,7 +93,7 @@ class ForgottenHallStageSelectionMixin:
         logger.error(f'[ApocalypticShadow] Failed to select stage {stage_num}')
         return False
 
-    def stage_choose(self, dungeon: DungeonList, skip_first_screenshot=True):
+    def stage_choose(self, dungeon: DungeonList, skip_first_screenshot=True, timeout: float = 20.0) -> bool:
         """
         Pages:
             in: page_forgotten_hall, FORGOTTEN_HALL_CHECK
@@ -109,9 +109,10 @@ class ForgottenHallStageSelectionMixin:
             click_button = LAST_VASTIGES_CLICK
         else:
             logger.error(f'Choosing {dungeon} in forgotten hall is not supported')
-            return
+            return False
 
-        while 1:
+        timeout_timer = Timer(timeout).start()
+        while not timeout_timer.reached():
             if skip_first_screenshot:
                 skip_first_screenshot = False
             else:
@@ -122,7 +123,7 @@ class ForgottenHallStageSelectionMixin:
             # interval prevents `check_button` being triggered in the next 0.3s
             if self.match_template_color(check_button, interval=0.3):
                 logger.info(f'Stage chose at {dungeon}')
-                break
+                return True
             if self.handle_forgotten_hall_buff():
                 continue
             if self.appear_then_click(TELEPORT, interval=2):
@@ -131,6 +132,9 @@ class ForgottenHallStageSelectionMixin:
                 self.device.click(click_button)
                 self.interval_reset(check_button)
                 continue
+
+        logger.error(f'Stage choose {dungeon} timeout after {timeout}s')
+        return False
 
     def goto_stage_selection(self, dungeon: DungeonList):
         """
@@ -154,7 +158,8 @@ class ForgottenHallStageSelectionMixin:
                 logger.error('Failed to navigate to Forgotten Hall')
                 return False
 
-        self.stage_choose(dungeon)
+        if not self.stage_choose(dungeon):
+            return False
         return True
 
     def _wait_for_stage_list_loaded(self, timeout: float = 20.0, skip_first_screenshot=True) -> bool:
@@ -371,10 +376,19 @@ class ForgottenHallStageSelectionMixin:
             if team1_preset or team2_preset:
                 logger.hr('Configure preset teams', level=1)
                 if dungeon_type == 'Pure_Fiction':
-                    self._configure_pure_fiction_preset_teams(team1_preset=team1_preset, team2_preset=team2_preset)
+                    if not self._configure_pure_fiction_preset_teams(
+                        team1_preset=team1_preset,
+                        team2_preset=team2_preset,
+                    ):
+                        logger.error('[PureFiction] Preset teams configuration failed')
+                        return False
                 else:
-                    self._click_preset_team(timeout=15)
-                    self._configure_preset_teams(team1_preset, team2_preset, verify_method='slot')
+                    if not self._click_preset_team(timeout=15):
+                        logger.error('Failed to open preset team panel')
+                        return False
+                    if not self._configure_preset_teams(team1_preset, team2_preset, verify_method='slot'):
+                        logger.error('Preset teams configuration failed')
+                        return False
                 logger.info('Preset teams configuration completed')
 
             if dungeon_type == 'Pure_Fiction' and (team1_buff or team2_buff):
@@ -440,19 +454,25 @@ class ForgottenHallStageSelectionMixin:
             # self.dungeon_tab_goto(KEYWORDS_DUNGEON_TAB.Survival_Index)
             # self.dungeon_nav_goto(KEYWORDS_DUNGEON_NAV.Forgotten_Hall)
 
-        self.stage_choose(dungeon)
+        if not self.stage_choose(dungeon):
+            logger.error(f'Failed to choose dungeon stage tab: {dungeon}')
+            return False
         logger.info(f'Stage list select: {stage_keyword}')
-        STAGE_LIST.select_row(stage_keyword, main=self)
+        if not STAGE_LIST.select_row(stage_keyword, main=self):
+            logger.error(f'Failed to select stage row: {stage_keyword}')
+            return False
 
         # 配置预设编队
         if team1_preset or team2_preset:
             logger.hr('Configure preset teams', level=1)
 
-            # 点击预设编队按钮（增加超时，失败仅警告）
-            self._click_preset_team(timeout=15)
+            if not self._click_preset_team(timeout=15):
+                logger.error('Failed to open preset team panel')
+                return False
 
-            # 配置预设编队（增加等待和重试，失败仅警告）
-            self._configure_preset_teams(team1_preset, team2_preset)
+            if not self._configure_preset_teams(team1_preset, team2_preset):
+                logger.error('Preset teams configuration failed')
+                return False
 
             logger.info('Preset teams configuration completed')
 

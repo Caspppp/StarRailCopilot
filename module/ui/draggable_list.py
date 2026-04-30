@@ -223,13 +223,21 @@ class DraggableList:
                 return row
         return None
 
-    def select_row(self, row: Keyword, main: ModuleBase, insight=True, skip_first_screenshot=True):
+    def select_row(
+            self,
+            row: Keyword,
+            main: ModuleBase,
+            insight=True,
+            skip_first_screenshot=True,
+            timeout: float | None = None
+    ):
         """
         Args:
             row:
             main:
             insight: If call `insight_row()` before selecting
             skip_first_screenshot:
+            timeout: Maximum seconds to wait for selected state, None for no timeout
 
         Returns:
             If success
@@ -245,7 +253,12 @@ class DraggableList:
         interval = Timer(5)
         skip_first_load_rows = True
         load_rows_interval = Timer(1)
+        timeout_timer = Timer(timeout).start() if timeout is not None else None
         while 1:
+            if timeout_timer is not None and timeout_timer.reached():
+                logger.error(f'Select row {row} timeout after {timeout}s')
+                return False
+
             if skip_first_screenshot:
                 skip_first_screenshot = False
             else:
