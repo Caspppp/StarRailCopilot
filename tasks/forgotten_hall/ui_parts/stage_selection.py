@@ -222,14 +222,49 @@ class ForgottenHallStageSelectionMixin:
         logger.warning('Wait apocalyptic shadow loaded timeout')
         return False
 
-    def _wait_for_pure_fiction_loaded(self, timeout: float = 10.0, skip_first_screenshot=True) -> bool:
+    def _new_treasures_lightward_navigator(self):
+        from tools.forgotten_hall_navigator import TreasuresLightwardNavigator
+
+        return TreasuresLightwardNavigator()
+
+    def _handle_pure_fiction_start_story(self, navigator=None) -> bool:
+        if navigator is None:
+            navigator = self._new_treasures_lightward_navigator()
+        return navigator.handle_pure_fiction_start_story(self.device)
+
+    def _pure_fiction_stage_selection_ready(self, interval: float = 0.2) -> bool:
+        if self.match_template_color(STAGE_REWARD_BUTTON_LOWER, interval=interval):
+            return True
+
+        # Newer Pure Fiction page may show a stable "进入故事" button at bottom-right.
+        if self.match_template_color(PURE_FICTION_ENTER_STORY, interval=interval):
+            return True
+
+        # Backward compatibility for old versions / fallback.
+        return (
+            self.appear(PURE_FICTION_TEAM_BUTTON, interval=interval)
+            or self.appear(PURE_FICTION_TEAM_TITLE, interval=interval)
+        )
+
+    def _wait_for_pure_fiction_loaded(
+        self,
+        timeout: float = 12.0,
+        skip_first_screenshot=True,
+        navigator=None,
+        ready_stability: float = 2.0,
+    ) -> bool:
         """
-        等待虚构叙事选关界面加载完成（通过右下角奖励按钮判断）。
+        等待虚构叙事选关界面加载完成，并处理中途延迟弹出的“开启故事”介绍页。
 
         Returns:
             bool: 是否在超时内加载成功
         """
+        if navigator is None:
+            navigator = self._new_treasures_lightward_navigator()
+
         timer = Timer(timeout).start()
+        ready_timer = None
+        start_story_handled = False
         while not timer.reached():
             if skip_first_screenshot:
                 skip_first_screenshot = False
@@ -237,19 +272,30 @@ class ForgottenHallStageSelectionMixin:
                 self.device.screenshot()
 
             if self.handle_forgotten_hall_buff():
+                ready_timer = None
                 continue
 
-            if self.match_template_color(STAGE_REWARD_BUTTON_LOWER, interval=0.2):
-                return True
+            if self._handle_pure_fiction_start_story(navigator=navigator):
+                logger.info('[PureFiction] Start story handled while waiting for stage selection')
+                start_story_handled = True
+                ready_timer = None
+                continue
 
-            # Newer Pure Fiction page may show a stable "进入故事" button at bottom-right.
-            if self.match_template_color(PURE_FICTION_ENTER_STORY, interval=0.2):
-                return True
+            if self._pure_fiction_stage_selection_ready(interval=0.2):
+                if start_story_handled or ready_stability <= 0:
+                    logger.info('[PureFiction] Stage selection confirmed')
+                    return True
 
-            # Backward compatibility for old versions / fallback.
-            if (self.appear(PURE_FICTION_TEAM_BUTTON, interval=0.2)
-                    or self.appear(PURE_FICTION_TEAM_TITLE, interval=0.2)):
-                return True
+                if ready_timer is None:
+                    ready_timer = Timer(ready_stability).start()
+                    continue
+
+                if ready_timer.reached():
+                    logger.info('[PureFiction] Stage selection confirmed stable')
+                    return True
+                continue
+
+            ready_timer = None
 
         logger.warning('Wait pure fiction loaded timeout')
         return False
@@ -271,18 +317,29 @@ class ForgottenHallStageSelectionMixin:
             # Pure Fiction/Apocalyptic Shadow stage selection pages are not part of the base UI page map,
             # so blindly calling ui_ensure(page_guide) would treat them as "Unknown ui page" and press BACK,
             # causing an unnecessary exit/re-enter loop.
+            navigator = None
             self.device.screenshot()
             if self.handle_forgotten_hall_buff(interval=0):
                 self.device.screenshot()
 
             if dungeon_type == 'Pure_Fiction':
-                if (
-                    self.match_template_color(STAGE_REWARD_BUTTON_LOWER, interval=0)
-                    or self.match_template_color(PURE_FICTION_ENTER_STORY, interval=0)
-                    or self.appear(PURE_FICTION_TEAM_BUTTON, interval=0)
-                    or self.appear(PURE_FICTION_TEAM_TITLE, interval=0)
-                ):
-                    logger.info('[PureFiction] Already at stage selection, skip navigation')
+                if self._pure_fiction_stage_selection_ready(interval=0):
+                    logger.info('[PureFiction] Stage selection marker visible, confirming page state')
+                    return self._wait_for_pure_fiction_loaded(
+                        timeout=12.0,
+                        skip_first_screenshot=True,
+                    )
+
+                navigator = self._new_treasures_lightward_navigator()
+                if self._handle_pure_fiction_start_story(navigator=navigator):
+                    logger.info('[PureFiction] Start story handled from current page')
+                    if not self._wait_for_pure_fiction_loaded(
+                        timeout=12.0,
+                        skip_first_screenshot=True,
+                        navigator=navigator,
+                    ):
+                        logger.error('Failed to load Pure Fiction stage selection after start story')
+                        return False
                     return True
 
             if dungeon_type == 'Apocalyptic_Shadow':
@@ -296,9 +353,9 @@ class ForgottenHallStageSelectionMixin:
                     return True
 
             self.ui_ensure(page_guide)
-            from tools.forgotten_hall_navigator import TreasuresLightwardNavigator
 
-            navigator = TreasuresLightwardNavigator()
+            if navigator is None:
+                navigator = self._new_treasures_lightward_navigator()
             if dungeon_type == 'Pure_Fiction':
                 if not navigator.goto_pure_fiction_from_guide(self.device):
                     logger.error('Failed to navigate to Pure Fiction via Treasures Lightward')
@@ -310,8 +367,13 @@ class ForgottenHallStageSelectionMixin:
 
             if dungeon_type == 'Pure_Fiction':
                 # 虚构叙事为固定页面，不依赖 STAGE_LIST OCR
-                if not self._wait_for_pure_fiction_loaded(timeout=10.0, skip_first_screenshot=True):
-                    logger.warning('Pure Fiction stage selection not confirmed, continuing...')
+                if not self._wait_for_pure_fiction_loaded(
+                    timeout=12.0,
+                    skip_first_screenshot=True,
+                    navigator=navigator,
+                ):
+                    logger.error('Failed to load Pure Fiction stage selection after navigation')
+                    return False
                 return True
 
             if dungeon_type == 'Apocalyptic_Shadow':
@@ -358,6 +420,10 @@ class ForgottenHallStageSelectionMixin:
         if dungeon_type in ('Pure_Fiction', 'Apocalyptic_Shadow'):
             if not self.goto_stage_selection_by_dungeon_type(dungeon_type):
                 return False
+
+            if dungeon_type == 'Pure_Fiction':
+                team1_buff = team1_buff or 1
+                team2_buff = team2_buff or 1
 
             if dungeon_type == 'Pure_Fiction':
                 stage_num = self.pure_fiction_resolve_stage_num(stage_keyword.id)

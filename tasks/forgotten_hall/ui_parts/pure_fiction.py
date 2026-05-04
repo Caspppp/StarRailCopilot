@@ -928,12 +928,11 @@ class ForgottenHallPureFictionMixin:
             if self.handle_forgotten_hall_buff():
                 continue
 
-            # Team selection screen has top-right pill icons (preset & trash).
-            if self.appear(PURE_FICTION_PRESET_ICON, interval=0) or self.appear(PURE_FICTION_CLEAR_ICON, interval=0):
+            if self._pure_fiction_team_selection_ready():
                 if clicked_team_button:
-                    logger.info('[PureFiction] Team selection ready (preset/clear icon visible)')
+                    logger.info('[PureFiction] Team selection ready')
                 else:
-                    logger.info('[PureFiction] Team selection already open (preset/clear icon visible)')
+                    logger.info('[PureFiction] Team selection already open')
                 return True
 
             # Stage selection page is stable when "进入故事" is visible; at this point we must open team selection.
@@ -957,6 +956,18 @@ class ForgottenHallPureFictionMixin:
 
         logger.warning('[PureFiction] Enter team selection timeout')
         return False
+
+    def _pure_fiction_team_selection_ready(self) -> bool:
+        """Return True only when the actual Pure Fiction team screen is loaded."""
+        if not self.appear(PURE_FICTION_TEAM_TITLE, interval=0):
+            return False
+
+        return (
+            self.appear(PURE_FICTION_PRESET_ICON, interval=0)
+            or self.appear(PURE_FICTION_CLEAR_ICON, interval=0)
+            or self.appear(PURE_FICTION_TEAM1_BUFF, interval=0)
+            or self.appear(PURE_FICTION_TEAM2_BUFF, interval=0)
+        )
 
     PURE_FICTION_TEAM_ROW_SELECT_AREAS = {
         # Row-number diamond areas (虚构叙事-编队) — used to set active row before applying preset teams.

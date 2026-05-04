@@ -369,6 +369,7 @@ class ForgottenHallPresetTeamMixin:
     PRESET_TEAM_PITCH = 172   # height + gap
     PRESET_TEAM_VIEW_HEIGHT = 548  # 可见区域高度
     PRESET_TEAM_TOP_Y = 130   # 列表顶部Y坐标
+    PRESET_TEAM_VISIBLE_COUNT = 3.0  # 预设编队面板稳定可见 3 个完整队伍
 
     def _get_preset_team_scroll_thumb(self, image) -> tuple:
         """检测预设编队滚动条滑块
@@ -456,9 +457,9 @@ class ForgottenHallPresetTeamMixin:
         h_norm = h / max(H_track, 1.0)                     # 大小 0-1
 
         # 从滑块大小反推总队伍数
-        # h_norm ≈ 可见队伍数 / 总队伍数
-        visible_teams = 3.2
-        N_total = int(round(visible_teams / max(h_norm, 0.1)))
+        # h_norm ≈ 可见队伍数 / 总队伍数。虚构叙事预设编队面板虽然底部会露出边距，
+        # 但可稳定点击/识别的是 3 个完整队伍；按 3.2 估算会把 8 队误判成 9 队。
+        N_total = int(round(self.PRESET_TEAM_VISIBLE_COUNT / max(h_norm, 0.1)))
         N_total = max(4, min(12, N_total))  # 限制在4-12范围
 
         # 计算当前顶部队伍索引

@@ -358,8 +358,8 @@
       "Stage": 10,
       "Team1Preset": 1,
       "Team2Preset": 2,
-      "Team1Buff": "",
-      "Team2Buff": "",
+      "Team1Buff": "1",
+      "Team2Buff": "1",
       "AutoStageSelection": true,
       "TargetStars": 3,
       "MinStage": 1

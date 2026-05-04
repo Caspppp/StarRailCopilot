@@ -63,21 +63,42 @@ class PureFictionDungeonMode:
             logger.hr(f'Auto Challenge Pure Fiction Stage {next_stage}', level=1)
             logger.info(f'[PureFiction] Stage stars snapshot: {stage_stars}')
 
-            success, actual_stars = task._challenge_stage(
-                dungeon_type=dungeon_type,
-                stage_num=next_stage,
-                team1_preset=team1_preset,
-                team2_preset=team2_preset,
-                team1_buff=team1_buff,
-                team2_buff=team2_buff,
-                target_stars=target_stars,
-            )
+            attempts = [
+                (team1_preset, team2_preset, team1_buff, team2_buff, False),
+                (team2_preset, team1_preset, team2_buff, team1_buff, True),
+            ]
+            stage_succeeded = False
+            last_stars = 0
 
-            if not success:
+            for actual_team1, actual_team2, actual_buff1, actual_buff2, swapped in attempts:
+                if swapped:
+                    logger.warning(
+                        f'Pure Fiction stage {next_stage} failed, retrying with swapped teams: '
+                        f'team1={actual_team1}, team2={actual_team2}'
+                    )
+
+                success, actual_stars = task._challenge_stage(
+                    dungeon_type=dungeon_type,
+                    stage_num=next_stage,
+                    team1_preset=actual_team1,
+                    team2_preset=actual_team2,
+                    team1_buff=actual_buff1,
+                    team2_buff=actual_buff2,
+                    target_stars=target_stars,
+                )
+
+                last_stars = actual_stars
+                if success:
+                    stage_succeeded = True
+                    break
+
+                task.check_and_claim_rewards(skip_first_screenshot=False)
+
+            if not stage_succeeded:
                 logger.error(
                     'Pure Fiction stage '
-                    f'{next_stage} failed or did not reach target stars: '
-                    f'{actual_stars}'
+                    f'{next_stage} failed or did not reach target stars after team swap: '
+                    f'{last_stars}'
                 )
                 return False
 

@@ -29,6 +29,55 @@ from tasks.forgotten_hall.stage_ocr import STAGE_LIST, detect_unlocked_text
 from tasks.map.control.joystick import JoystickContact
 
 class ForgottenHallBattleMixin:
+    def _click_forgotten_hall_prompt_safe_blank(self, name: str):
+        """Click a known blank area that safely dismisses FH/PF map intro prompts."""
+        from module.base.button import ClickButton
+
+        image = getattr(self.device, "image", None)
+        scale = 1.0
+        if isinstance(image, np.ndarray) and image.size:
+            scale = self._scale_from_image(image)
+
+        blank_area = self._scale_area(self.FORGOTTEN_HALL_CLICK_BLANK_SAFE_AREA, scale)
+        self.device.click(ClickButton(area=blank_area, name=name))
+
+    def _settle_after_forgotten_hall_prompt_click(self, screenshots: int = 2):
+        for _ in range(screenshots):
+            self.device.screenshot()
+
+    def _prepare_auto_engage_after_map_enter(self, skip_first_screenshot=True) -> bool:
+        """
+        Clear map-entry intro prompts before creating a joystick contact.
+
+        Pure Fiction can show the same click-blank prompt slightly after map
+        detection. If the first joystick down lands while that prompt is still
+        active, later joystick move events are logged but the character remains
+        idle. A safe blank click is harmless in the map and clears the prompt
+        even when the text ROI misses it.
+
+        Returns:
+            bool: updated skip_first_screenshot value for the movement loop.
+        """
+        if skip_first_screenshot:
+            self.device.screenshot()
+            skip_first_screenshot = False
+
+        if self._handle_forgotten_hall_click_blank_prompt(interval=0):
+            self._settle_after_forgotten_hall_prompt_click()
+            return False
+
+        if hasattr(self.device, "click"):
+            logger.info("[ForgottenHall] Click blank to clear possible intro prompt before movement")
+            self._click_forgotten_hall_prompt_safe_blank(
+                name="FORGOTTEN_HALL_POSSIBLE_INTRO_PROMPT"
+            )
+            self._settle_after_forgotten_hall_prompt_click()
+
+            if self._handle_forgotten_hall_click_blank_prompt(interval=0):
+                self._settle_after_forgotten_hall_prompt_click()
+
+        return skip_first_screenshot
+
     def handle_quick_complete_popup(self, interval=2) -> bool:
         """Handle the quick-clear reward popup shown after first 3-star clears."""
         from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import (
@@ -421,68 +470,101 @@ class ForgottenHallBattleMixin:
         logger.attr('MoveDuration', move_duration)
         logger.attr('Timeout', timeout)
 
-        # Initialize timers
-        move_timer = Timer(move_duration).start()
-        timeout_timer = Timer(timeout).start()
-        enemy_check_interval = Timer(0.3).start()
-        movement_interval = Timer(0.5).start()
+        prompt_restarts = 0
+        max_prompt_restarts = 3
+        skip_first_screenshot = self._prepare_auto_engage_after_map_enter(
+            skip_first_screenshot=skip_first_screenshot
+        )
 
-        # Phase 1: Move forward while detecting enemies
-        logger.info('Phase 1: Moving forward and detecting enemies')
-        with JoystickContact(self) as contact:
-            while not move_timer.reached():
+        while True:
+            move_timer = Timer(move_duration).start()
+            timeout_timer = Timer(timeout).start()
+            enemy_check_interval = Timer(0.3).start()
+            movement_interval = Timer(0.5).start()
+            restart_after_prompt = False
+
+            # Phase 1: Move forward while detecting enemies
+            logger.info('Phase 1: Moving forward and detecting enemies')
+            with JoystickContact(self) as contact:
+                while not move_timer.reached():
+                    if skip_first_screenshot:
+                        skip_first_screenshot = False
+                    else:
+                        self.device.screenshot()
+
+                    if self._handle_forgotten_hall_click_blank_prompt(interval=0.8):
+                        restart_after_prompt = True
+                        break
+
+                    # Check if already in combat (early success)
+                    if self.is_combat_executing():
+                        logger.info('Entered combat during movement')
+                        return True
+
+                    # Enable 2x running
+                    self.handle_map_run_2x()
+
+                    # Set joystick to move forward (direction=0 means forward)
+                    if movement_interval.reached():
+                        contact.set(direction=0, run=True)
+                        movement_interval.reset()
+
+                    # Enemy detection
+                    if enemy_check_interval.reached():
+                        self.aim.predict(self.device.image, enemy=True, item=False, show_log=False)
+                        if self.aim.aimed_enemy:
+                            logger.info(f'Enemy detected at {self.aim.aimed_enemy}')
+                            # Click attack button
+                            self.handle_map_A()
+                        enemy_check_interval.reset()
+
+                    # Check timeout
+                    if timeout_timer.reached():
+                        logger.warning('Auto engage timeout during movement phase')
+                        break
+
+            if restart_after_prompt:
+                prompt_restarts += 1
+                if prompt_restarts > max_prompt_restarts:
+                    logger.warning('Too many click-blank prompts during auto engage')
+                    break
+                logger.info('Click-blank prompt dismissed, restarting movement phase')
+                continue
+
+            # Phase 2: Continue searching for enemy without movement
+            logger.info('Phase 2: Stationary enemy search')
+            while not timeout_timer.reached():
                 if skip_first_screenshot:
                     skip_first_screenshot = False
                 else:
                     self.device.screenshot()
 
-                # Check if already in combat (early success)
+                if self._handle_forgotten_hall_click_blank_prompt(interval=0.8):
+                    restart_after_prompt = True
+                    break
+
+                # Check combat
                 if self.is_combat_executing():
-                    logger.info('Entered combat during movement')
+                    logger.info('Entered combat after movement')
                     return True
 
-                # Enable 2x running
-                self.handle_map_run_2x()
-
-                # Set joystick to move forward (direction=0 means forward)
-                if movement_interval.reached():
-                    contact.set(direction=0, run=True)
-                    movement_interval.reset()
-
-                # Enemy detection
+                # Keep detecting and attacking
                 if enemy_check_interval.reached():
                     self.aim.predict(self.device.image, enemy=True, item=False, show_log=False)
                     if self.aim.aimed_enemy:
                         logger.info(f'Enemy detected at {self.aim.aimed_enemy}')
-                        # Click attack button
                         self.handle_map_A()
                     enemy_check_interval.reset()
 
-                # Check timeout
-                if timeout_timer.reached():
-                    logger.warning('Auto engage timeout during movement phase')
+            if restart_after_prompt:
+                prompt_restarts += 1
+                if prompt_restarts > max_prompt_restarts:
+                    logger.warning('Too many click-blank prompts during auto engage')
                     break
+                logger.info('Click-blank prompt dismissed, restarting movement phase')
+                continue
 
-        # Phase 2: Continue searching for enemy without movement
-        logger.info('Phase 2: Stationary enemy search')
-        while not timeout_timer.reached():
-            if skip_first_screenshot:
-                skip_first_screenshot = False
-            else:
-                self.device.screenshot()
-
-            # Check combat
-            if self.is_combat_executing():
-                logger.info('Entered combat after movement')
-                return True
-
-            # Keep detecting and attacking
-            if enemy_check_interval.reached():
-                self.aim.predict(self.device.image, enemy=True, item=False, show_log=False)
-                if self.aim.aimed_enemy:
-                    logger.info(f'Enemy detected at {self.aim.aimed_enemy}')
-                    self.handle_map_A()
-                enemy_check_interval.reset()
+            break
 
         # Phase 3: Fallback mechanism
         logger.warning('Auto engage enemy timeout, using combat_poor_try fallback')

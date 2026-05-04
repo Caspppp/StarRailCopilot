@@ -482,12 +482,12 @@ ForgottenHallChallenge:
     option_exclude: Team1Preset
   Team1Buff:
     type: input
-    value: ""
+    value: "1"
     option: [ "击破", "忆灵" ]
     placeholder: "击破/忆灵"
   Team2Buff:
     type: input
-    value: ""
+    value: "1"
     option: [ "击破", "忆灵" ]
     placeholder: "击破/忆灵"
   AutoStageSelection:

@@ -136,6 +136,9 @@ class ForgottenHallChallenge(ForgottenHallUI):
             text = str(value).strip()
             return text if text else 0
 
+    def _get_pure_fiction_buff_config(self, key: str, default: int = 1) -> int | str | list[str]:
+        return self._get_buff_config(key, default=default) or default
+
     def _battle_end_checker(self, battle_num: int, include_pure_fiction_return: bool = False):
         from tasks.combat.assets.assets_combat_finish import COMBAT_AGAIN
         from tasks.forgotten_hall.assets.assets_forgotten_hall_ui import BATTLE_FAILED, RETURN_TO_FORGOTTEN_HALL
@@ -204,8 +207,8 @@ class ForgottenHallChallenge(ForgottenHallUI):
             auto_selection = getattr(self.config, 'ForgottenHallChallenge_AutoStageSelection', False)
             team1_preset = int(self.config.ForgottenHallChallenge_Team1Preset)
             team2_preset = int(self.config.ForgottenHallChallenge_Team2Preset)
-            team1_buff = self._get_buff_config('ForgottenHallChallenge_Team1Buff', default=1)
-            team2_buff = self._get_buff_config('ForgottenHallChallenge_Team2Buff', default=1)
+            team1_buff = self._get_pure_fiction_buff_config('ForgottenHallChallenge_Team1Buff', default=1)
+            team2_buff = self._get_pure_fiction_buff_config('ForgottenHallChallenge_Team2Buff', default=1)
             dungeon_types = self._get_selected_dungeon_types()
 
             logger.hr('Forgotten Hall Challenge Configuration', level=1)
@@ -448,8 +451,8 @@ class ForgottenHallChallenge(ForgottenHallUI):
             dungeon_type = dungeon_type or self.config.ForgottenHallChallenge_DungeonType
             team1_preset = int(self.config.ForgottenHallChallenge_Team1Preset)
             team2_preset = int(self.config.ForgottenHallChallenge_Team2Preset)
-            team1_buff = self._get_buff_config('ForgottenHallChallenge_Team1Buff', default=1)
-            team2_buff = self._get_buff_config('ForgottenHallChallenge_Team2Buff', default=1)
+            team1_buff = self._get_pure_fiction_buff_config('ForgottenHallChallenge_Team1Buff', default=1)
+            team2_buff = self._get_pure_fiction_buff_config('ForgottenHallChallenge_Team2Buff', default=1)
             target_stars = int(getattr(self.config, 'ForgottenHallChallenge_TargetStars', 3))
             min_stage = int(getattr(self.config, 'ForgottenHallChallenge_MinStage', 1))
 

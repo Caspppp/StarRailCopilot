@@ -15,7 +15,7 @@ from tasks.forgotten_hall.challenge_modes.base import StandardDungeonMode
 from tasks.forgotten_hall.keywords import ForgottenHallStage, KEYWORDS_FORGOTTEN_HALL_STAGE
 from tasks.forgotten_hall.stage_ocr import ForgottenHallStageOcr, mark_locked_stage_buttons
 from tasks.forgotten_hall.ui import ForgottenHallUI
-from tasks.forgotten_hall.ui_parts import stage_selection
+from tasks.forgotten_hall.ui_parts import battle, preset_team, stage_selection
 from tools.forgotten_hall_star_detector.star_detector import (
     cluster_stars_by_proximity,
     detect_yellow_stars,
@@ -214,6 +214,90 @@ def test_standard_mode_re_raises_scheduler_handled_errors():
         )
 
 
+def test_pure_fiction_failure_claims_rewards_and_retries_swapped_teams():
+    mode = DUNGEON_MODES['Pure_Fiction']
+    challenge_calls = []
+    reward_calls = []
+
+    task = SimpleNamespace(
+        goto_stage_selection_by_dungeon_type=lambda dungeon_type: True,
+        check_and_claim_rewards=lambda skip_first_screenshot=False: reward_calls.append(
+            skip_first_screenshot
+        ) or False,
+        pure_fiction_next_stage_to_challenge=lambda: (4, {4: 0}),
+    )
+
+    def fake_challenge_stage(**kwargs):
+        challenge_calls.append(kwargs)
+        return (False, 0)
+
+    task._challenge_stage = fake_challenge_stage
+
+    assert mode.run_auto_selection(
+        task,
+        team1_preset=1,
+        team2_preset=2,
+        team1_buff=10,
+        team2_buff=20,
+        target_stars=3,
+        min_stage=1,
+    ) is False
+
+    assert [
+        (
+            call['team1_preset'],
+            call['team2_preset'],
+            call['team1_buff'],
+            call['team2_buff'],
+        )
+        for call in challenge_calls
+    ] == [(1, 2, 10, 20), (2, 1, 20, 10)]
+    assert reward_calls == [False, False, False]
+
+
+def test_pure_fiction_swapped_team_success_claims_rewards_and_finishes():
+    mode = DUNGEON_MODES['Pure_Fiction']
+    challenge_results = [(False, 0), (True, 1)]
+    challenge_calls = []
+    reward_calls = []
+    next_stage_results = [(4, {4: 0}), (-1, {4: 1})]
+
+    task = SimpleNamespace(
+        goto_stage_selection_by_dungeon_type=lambda dungeon_type: True,
+        check_and_claim_rewards=lambda skip_first_screenshot=False: reward_calls.append(
+            skip_first_screenshot
+        ) or False,
+        pure_fiction_next_stage_to_challenge=lambda: next_stage_results.pop(0),
+    )
+
+    def fake_challenge_stage(**kwargs):
+        challenge_calls.append(kwargs)
+        return challenge_results.pop(0)
+
+    task._challenge_stage = fake_challenge_stage
+
+    assert mode.run_auto_selection(
+        task,
+        team1_preset=1,
+        team2_preset=2,
+        team1_buff=10,
+        team2_buff=20,
+        target_stars=3,
+        min_stage=1,
+    ) is True
+
+    assert [
+        (
+            call['team1_preset'],
+            call['team2_preset'],
+            call['team1_buff'],
+            call['team2_buff'],
+        )
+        for call in challenge_calls
+    ] == [(1, 2, 10, 20), (2, 1, 20, 10)]
+    assert reward_calls == [False, False, False]
+
+
 def _stage_button(stage_num, area, star_count=0, is_locked=False):
     return SimpleNamespace(
         area=area,
@@ -374,6 +458,311 @@ def test_ui_additional_confirms_quick_complete_popup():
     assert clicked == ['QUICK_COMPLETE_CONFIRM']
 
 
+def test_wait_for_pure_fiction_loaded_handles_delayed_start_story():
+    ui = object.__new__(ForgottenHallUI)
+    state = {'story_checks': 0}
+
+    ui.device = SimpleNamespace(screenshot=lambda: None)
+    ui.handle_forgotten_hall_buff = lambda: False
+
+    class FakeNavigator:
+        def handle_pure_fiction_start_story(self, device):
+            state['story_checks'] += 1
+            return state['story_checks'] == 2
+
+    def fake_match_template_color(button, interval=0):
+        return button.name == 'PURE_FICTION_ENTER_STORY' and state['story_checks'] >= 3
+
+    ui.match_template_color = fake_match_template_color
+    ui.appear = lambda button, interval=0: False
+
+    assert ui._wait_for_pure_fiction_loaded(
+        timeout=1.0,
+        navigator=FakeNavigator(),
+        ready_stability=0,
+    ) is True
+    assert state['story_checks'] == 3
+
+
+def test_goto_pure_fiction_handles_start_story_before_ui_ensure():
+    ui = object.__new__(ForgottenHallUI)
+    ui.device = SimpleNamespace(screenshot=lambda: None)
+    handled = []
+
+    ui.handle_forgotten_hall_buff = lambda interval=0: False
+    ui._pure_fiction_stage_selection_ready = lambda interval=0: False
+    ui._new_treasures_lightward_navigator = lambda: object()
+    ui._handle_pure_fiction_start_story = lambda navigator=None: handled.append(navigator) or True
+    ui._wait_for_pure_fiction_loaded = lambda **kwargs: True
+    ui.ui_ensure = lambda page: (_ for _ in ()).throw(
+        AssertionError('should not leave the Pure Fiction start story page')
+    )
+
+    assert ui.goto_stage_selection_by_dungeon_type('Pure_Fiction') is True
+    assert handled
+
+
+def test_goto_pure_fiction_fails_when_stage_selection_not_confirmed():
+    ui = object.__new__(ForgottenHallUI)
+    ui.device = SimpleNamespace(screenshot=lambda: None)
+
+    class FakeNavigator:
+        def goto_pure_fiction_from_guide(self, device):
+            return True
+
+    ui.handle_forgotten_hall_buff = lambda interval=0: False
+    ui._pure_fiction_stage_selection_ready = lambda interval=0: False
+    ui._handle_pure_fiction_start_story = lambda navigator=None: False
+    ui._new_treasures_lightward_navigator = lambda: FakeNavigator()
+    ui.ui_ensure = lambda page: None
+    ui._wait_for_pure_fiction_loaded = lambda **kwargs: False
+
+    assert ui.goto_stage_selection_by_dungeon_type('Pure_Fiction') is False
+
+
+def test_enter_pure_fiction_team_selection_clicks_team_button_despite_icon_false_positive():
+    ui = object.__new__(ForgottenHallUI)
+    clicked = []
+    state = {'team_button_clicked': False}
+
+    def click(button):
+        clicked.append(button.name)
+        if button.name == 'PURE_FICTION_TEAM_BUTTON':
+            state['team_button_clicked'] = True
+
+    ui.device = SimpleNamespace(screenshot=lambda: None, click=click)
+    ui.handle_forgotten_hall_buff = lambda: False
+
+    def fake_match_template_color(button, interval=0):
+        return button.name == 'PURE_FICTION_ENTER_STORY' and not state['team_button_clicked']
+
+    def fake_appear(button, interval=0, similarity=None):
+        if button.name in {'PURE_FICTION_PRESET_ICON', 'PURE_FICTION_CLEAR_ICON'}:
+            return True
+        if button.name == 'PURE_FICTION_TEAM_TITLE':
+            return state['team_button_clicked']
+        if button.name == 'PURE_FICTION_TEAM_BUTTON':
+            return not state['team_button_clicked']
+        return False
+
+    ui.match_template_color = fake_match_template_color
+    ui.appear = fake_appear
+
+    assert ui._enter_pure_fiction_team_selection(timeout=1.0) is True
+    assert clicked == ['PURE_FICTION_TEAM_BUTTON']
+
+
+def test_pure_fiction_stage_goto_defaults_empty_buffs_to_option_one():
+    ui = object.__new__(ForgottenHallUI)
+    configured_buffs = []
+
+    ui.goto_stage_selection_by_dungeon_type = lambda dungeon_type: True
+    ui.pure_fiction_resolve_stage_num = lambda stage_id: stage_id
+    ui.pure_fiction_select_stage = lambda stage_num: True
+    ui._configure_pure_fiction_preset_teams = lambda team1_preset, team2_preset: True
+    ui._configure_pure_fiction_buffs = lambda team1_buff, team2_buff: (
+        configured_buffs.append((team1_buff, team2_buff)) or True
+    )
+
+    assert ui.stage_goto_by_dungeon_type(
+        'Pure_Fiction',
+        KEYWORDS_FORGOTTEN_HALL_STAGE.Stage_4,
+        team1_preset=1,
+        team2_preset=2,
+        team1_buff=0,
+        team2_buff=None,
+    ) is True
+    assert configured_buffs == [(1, 1)]
+
+
+def test_preset_team_scroll_estimates_eight_total_from_bottom_thumb():
+    ui = object.__new__(preset_team.ForgottenHallPresetTeamMixin)
+    image = np.zeros((720, 1280, 3), dtype=np.uint8)
+    x1, _, x2, _ = ui.PRESET_TEAM_SCROLLBAR_ROI
+    image[469:666, x1:x2] = 255
+    ui.device = SimpleNamespace(image=image)
+
+    valid, total, top = ui._get_preset_team_scroll_state()
+
+    assert valid is True
+    assert total == 8
+    assert top == 5
+
+
+def test_auto_engage_dismisses_click_blank_prompt_before_moving(monkeypatch):
+    ui = object.__new__(ForgottenHallUI)
+    calls = []
+
+    class FakeDevice:
+        image = np.zeros((720, 1280, 3), dtype=np.uint8)
+
+        def screenshot(self):
+            calls.append('screenshot')
+
+    class FakeJoystick:
+        def __init__(self, main):
+            self.main = main
+
+        def __enter__(self):
+            calls.append('joystick_enter')
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            calls.append('joystick_exit')
+
+        def set(self, direction=0, run=True):
+            calls.append(('move', direction, run))
+
+    prompt_open = {'value': True}
+    ui.device = FakeDevice()
+    ui._handle_forgotten_hall_click_blank_prompt = lambda interval=0.8: (
+        prompt_open.update(value=False) or calls.append('prompt') or True
+        if prompt_open['value'] else False
+    )
+    ui.is_combat_executing = lambda: not prompt_open['value']
+    ui.handle_map_run_2x = lambda: calls.append('run_2x')
+    ui.aim = SimpleNamespace(predict=lambda *args, **kwargs: None, aimed_enemy=None)
+    ui.handle_map_A = lambda: calls.append('attack')
+    ui.combat_poor_try = lambda: []
+
+    monkeypatch.setattr(battle, 'JoystickContact', FakeJoystick)
+
+    assert ui.auto_engage_enemy(move_duration=1, timeout=1) is True
+    assert calls.index('prompt') < calls.index('joystick_enter')
+    assert ('move', 0, True) not in calls
+    assert 'run_2x' not in calls
+
+
+def test_auto_engage_clears_possible_intro_prompt_before_joystick(monkeypatch):
+    ui = object.__new__(ForgottenHallUI)
+    calls = []
+    moved = {'value': False}
+
+    class FakeDevice:
+        image = np.zeros((720, 1280, 3), dtype=np.uint8)
+
+        def screenshot(self):
+            calls.append('screenshot')
+
+        def click(self, button):
+            calls.append(('click', button.name))
+
+    class FakeJoystick:
+        def __init__(self, main):
+            self.main = main
+
+        def __enter__(self):
+            calls.append('joystick_enter')
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            calls.append('joystick_exit')
+
+        def set(self, direction=0, run=True):
+            moved['value'] = True
+            calls.append(('move', direction, run))
+
+    ui.device = FakeDevice()
+    ui._handle_forgotten_hall_click_blank_prompt = lambda interval=0.8: False
+    ui.is_combat_executing = lambda: moved['value']
+    ui.handle_map_run_2x = lambda: calls.append('run_2x')
+    ui.aim = SimpleNamespace(predict=lambda *args, **kwargs: None, aimed_enemy=None)
+    ui.handle_map_A = lambda: calls.append('attack')
+    ui.combat_poor_try = lambda: []
+
+    monkeypatch.setattr(battle, 'JoystickContact', FakeJoystick)
+
+    assert ui.auto_engage_enemy(move_duration=1, timeout=1) is True
+    assert calls.index(('click', 'FORGOTTEN_HALL_POSSIBLE_INTRO_PROMPT')) < calls.index(
+        'joystick_enter'
+    )
+    assert calls.index('joystick_enter') < calls.index(('move', 0, True))
+
+
+def test_auto_engage_restarts_movement_after_stationary_prompt(monkeypatch):
+    ui = object.__new__(ForgottenHallUI)
+    calls = []
+
+    class FakeDevice:
+        image = np.zeros((720, 1280, 3), dtype=np.uint8)
+
+        def screenshot(self):
+            calls.append('screenshot')
+
+    class FakeJoystick:
+        def __init__(self, main):
+            self.main = main
+
+        def __enter__(self):
+            calls.append('joystick_enter')
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            calls.append('joystick_exit')
+
+        def set(self, direction=0, run=True):
+            calls.append(('move', direction, run))
+
+    class FakeTimer:
+        move_instances = 0
+
+        def __init__(self, limit, count=0):
+            self.limit = limit
+            self.calls = 0
+            if limit == 8:
+                FakeTimer.move_instances += 1
+                self.move_instance = FakeTimer.move_instances
+            else:
+                self.move_instance = 0
+
+        def start(self):
+            return self
+
+        def reached(self):
+            self.calls += 1
+            if self.limit == 8:
+                if self.move_instance == 1:
+                    return True
+                return self.calls > 2
+            if self.limit == 15:
+                return False
+            if self.limit == 0.5:
+                return True
+            if self.limit == 0.3:
+                return False
+            return False
+
+        def reset(self):
+            self.calls = 0
+            return self
+
+    prompt_open = {'value': True}
+    moved = {'value': False}
+    ui.device = FakeDevice()
+    ui._handle_forgotten_hall_click_blank_prompt = lambda interval=0.8: (
+        prompt_open.update(value=False) or calls.append('prompt') or True
+        if prompt_open['value'] else False
+    )
+    ui.is_combat_executing = lambda: moved['value']
+    ui.handle_map_run_2x = lambda: calls.append('run_2x')
+    ui.aim = SimpleNamespace(predict=lambda *args, **kwargs: None, aimed_enemy=None)
+    ui.handle_map_A = lambda: calls.append('attack')
+    ui.combat_poor_try = lambda: []
+    ui._prepare_auto_engage_after_map_enter = lambda skip_first_screenshot=True: skip_first_screenshot
+
+    def set_moved(direction=0, run=True):
+        moved['value'] = True
+        calls.append(('move', direction, run))
+
+    monkeypatch.setattr(battle, 'JoystickContact', FakeJoystick)
+    monkeypatch.setattr(battle, 'Timer', FakeTimer)
+    FakeJoystick.set = lambda self, direction=0, run=True: set_moved(direction, run)
+
+    assert ui.auto_engage_enemy(move_duration=8, timeout=15) is True
+    assert calls.index('prompt') < calls.index(('move', 0, True))
+    assert calls.count('joystick_enter') == 2
+
+
 def test_check_and_claim_rewards_waits_for_reward_page_before_returning():
     ui = object.__new__(ForgottenHallUI)
     clicked = []
@@ -456,6 +845,8 @@ def test_challenge_buff_config_keeps_existing_value_semantics():
     assert task._get_buff_config('KeywordList') == ['击破', '忆灵']
     assert task._get_buff_config('EmptyText') == 0
     assert task._get_buff_config('Missing', default=1) == 1
+    assert task._get_pure_fiction_buff_config('EmptyText', default=1) == 1
+    assert task._get_pure_fiction_buff_config('Missing', default=1) == 1
 
 
 def test_dungeon_modes_expose_required_mode_interface():
